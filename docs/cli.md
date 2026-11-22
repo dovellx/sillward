@@ -32,3 +32,9 @@ tau-ai <所钉的 tau-ai 版本>
 tau 随安装自带的内置扩展仍会加载。`--no-extensions` 关掉的是目录发现，不是 tau 自己带的内置能力。
 
 本扩展的 `setup` 目前是空的。tau 启动时会调用它，它不注册工具、命令或钩子。
+
+## 配置
+
+用户配置、进程内的模式覆盖和 ledger 字段见 [配置](config.md)。
+
+`sillward` 启动 tau 时还不会读取 `~/.sillward/config.json`，也不会写 `.sillward/ledger.jsonl`。改这些文件不会改变这一次命令的工具行为。
