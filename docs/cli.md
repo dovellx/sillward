@@ -63,3 +63,7 @@ implementer 的 `write` 和 `edit` 必须落在给定前缀里。前缀外的调
 ## 配置
 
 用户配置、进程内的模式覆盖、阈值和 ledger 字段见 [配置](config.md)。
+
+## 夜间对照
+
+题目目录、两臂运行和报告见 [测评](eval.md)。对照在 Linux 上跑，并把 `tool.approval` 与 `turn.continue` 设为 `active`。
