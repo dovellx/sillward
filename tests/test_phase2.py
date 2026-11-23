@@ -82,6 +82,15 @@ class DispatchJudge:
             if spec is None:
                 return _verdict("new_task", FRAME)
             return _verdict(spec[0], spec[1], spec[2])
+        if request.point == "memory.capture":
+            answer = "no" if "no" in request.candidates else request.candidates[-1]
+            return _verdict(answer, request.candidates)
+        if request.point == "memory.recall":
+            answer = "skip" if "skip" in request.candidates else request.candidates[-1]
+            return _verdict(answer, request.candidates)
+        if request.point == "memory.worth":
+            answer = "known" if "known" in request.candidates else request.candidates[-1]
+            return _verdict(answer, request.candidates)
         spec = self._answers[request.point]
         return _verdict(spec[0], spec[1], spec[2])
 

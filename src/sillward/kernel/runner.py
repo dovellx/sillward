@@ -31,8 +31,11 @@ class Decision:
     refused the call, ``off`` when the point is off or a non-blocking point's
     judge failed, ``execute`` when an active gate let the call proceed,
     ``follow_up`` when an active gate sent the turn back, ``rewrite`` when an
-    active gate stored a new frame or replaced tool text, and ``unchanged``
-    when a verdict was recorded without changing behavior.
+    active gate stored a new frame or replaced tool text, ``capture`` when an
+    active memory point wrote a lesson, ``recall`` when active recall selected
+    a lesson into the turn, ``discard`` when a child write was dropped without
+    asking the judge, and ``unchanged`` when a verdict was recorded without
+    changing behavior.
     """
 
     point: str
@@ -123,6 +126,18 @@ class Kernel:
             probabilities=verdict.probabilities,
             elapsed_ms=verdict.elapsed_ms,
             adapter=verdict.adapter,
+        )
+
+    def discard(self, request: Request) -> Decision:
+        """Append a discard row. The judge is not asked."""
+        return self._finish(
+            request,
+            mode=self._config.mode(request.point),
+            action="discard",
+            answer=None,
+            probabilities=None,
+            elapsed_ms=None,
+            adapter=None,
         )
 
     def _finish(

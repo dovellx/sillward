@@ -53,6 +53,9 @@
 | `block` | 调用被挡住。低于阈值、裁判拒绝、人拒绝，或会挡住工具的点发生裁判失败，都是这个动作 |
 | `follow_up` | active，向模型送回了一条 follow-up |
 | `rewrite` | active，写入了新的 task frame，或改写了工具输出 |
+| `capture` | active，一条 lesson 写入了 `.sillward/lessons.jsonl` |
+| `recall` | active，一条选中的 lesson 放进了本轮用户消息 |
+| `discard` | 子会话的写入请求被丢掉。这次没有询问裁判 |
 | `unchanged` | 裁决已记下，行为没有改变。`shadow` 下成功的裁决用这个动作 |
 | `off` | 该点模式是 `off`，或一个不会挡住工具的点发生了裁判失败 |
 
@@ -80,3 +83,28 @@
 `turn.completion` 在模型停住并声称完成、而这轮用户消息里没有实际跑过 `pytest` 或 `ruff` 时，送回一次：`You claimed the work was complete without a verification action. Run the project's tests or lint, then continue.` 同一条用户消息只送这一次。若两点都要送，先送 completion 这一条。
 
 `task.frame` 判断这条用户消息是新任务、硬约束、纠正、子目标，还是无变化。active 时，只有这次不是无变化、并且和会话里已经记下的 frame 不同，才写一条新的 frame。用户消息原文不改。`shadow` 只记账。这个 frame 随会话结束，不是 lesson。
+
+## 记忆
+
+Lessons 文件是项目下的 `.sillward/lessons.jsonl`，一行一个 JSON 对象。这个目录已被 git 忽略。
+
+一条 lesson 的字段是 `id`、`body`、`source`、`created_at`、`probability`。`source` 是 `user` 或 `agent`。`created_at` 是 UTC 时间。`probability` 是写下这一条时，同意捕获那个答案的概率。
+
+`memory.capture` 只看父会话里用户自己输入的消息，不看扩展送回的 follow-up。active 且裁决为 `yes` 时追加一条，来源是 `user`。`shadow` 询问并记账，不写文件。
+
+去重时先去掉两端空白，再把连续空白收成一个空格，然后比较正文。这样相同的正文不产生第二条，文件里留下先写下的那条原文。规范化之后仍不同的两条都保留，包括互相矛盾的两条。没有合并。
+
+`memory.recall` 对文件里的每一条各问一次。候选是这条 lesson 的 id 和 `skip`。active 且答案是该 id 时，选中的正文按文件顺序放进本轮用户消息前面：
+
+```text
+Applicable lessons:
+- <正文>
+
+<用户原文>
+```
+
+模型看到的是这段文字，会话里记下的用户消息也是这段。没选中的正文不出现。`shadow` 不改用户消息；ledger 的 `answer` 是本会送入的 lesson id，不是正文。刚捕获的那条不进入同一条用户消息，从下一条用户消息起才参与 recall。
+
+`memory.worth` 的候选是 `reusable`、`once`、`known`。active 时只有 `reusable` 会追加，来源是 `agent`。`once` 和 `known` 不写。没有单独的命令；父会话在记下 agent 自己提出的 lesson 时才问这个点。
+
+子会话的捕获请求和 worth 请求直接丢弃，不询问裁判，不写文件。ledger 的动作是 `discard`。

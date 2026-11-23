@@ -11,6 +11,7 @@ from tau_coding.extensions.api import (
     ExtensionAPI,
     ExtensionContext,
     InputEvent,
+    InputHookResult,
     ToolCallHookEvent,
     ToolCallHookResult,
     ToolResultHookEvent,
@@ -24,6 +25,9 @@ from sillward.gates.state import LoopState
 from sillward.gates.support import bash_command, is_project_check
 from sillward.judges.factory import select_judge
 from sillward.kernel.runner import Kernel
+from sillward.memory.capture import consider_user
+from sillward.memory.recall import apply as apply_recall
+from sillward.memory.store import LessonStore
 
 
 class _ParentLoop:
@@ -33,6 +37,7 @@ class _ParentLoop:
         self._tau = tau
         self._kernel: Kernel | None = None
         self._config: Config | None = None
+        self._store: LessonStore | None = None
         self._client: httpx.Client | None = None
         self._state = LoopState()
 
@@ -59,16 +64,26 @@ class _ParentLoop:
             )
             self._config = config
             self._kernel = Kernel(config=config, judge=judge, project=context.cwd)
+            self._store = LessonStore(context.cwd)
         return self._kernel, self._config
 
-    async def on_input(self, event: InputEvent, context: ExtensionContext) -> None:
-        """Reset the per-message counters, then record a changed task frame."""
+    async def on_input(
+        self, event: InputEvent, context: ExtensionContext
+    ) -> InputHookResult | None:
+        """Reset counters, record the frame, then recall and maybe capture a lesson."""
         if event.source == "interactive":
             self._state.continue_sent = 0
             self._state.completion_sent = 0
             self._state.verified = False
         kernel, _config = self._ready(context)
         await frame.consider(self._tau, kernel, self._state, event)
+        if event.source != "interactive" or self._store is None:
+            return None
+        rewritten = apply_recall(kernel, self._store, event.text, role="parent")
+        consider_user(kernel, self._store, event.text, writer="parent")
+        if rewritten == event.text:
+            return None
+        return InputHookResult(action="transform", text=rewritten)
 
     async def on_tool_call(
         self,

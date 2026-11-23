@@ -5,3 +5,4 @@
 - [阶段 0：骨架](phase-0.md)
 - [阶段 1：协议、配置、ledger](phase-1.md)
 - [阶段 2：父循环上的门](phase-2.md)
+- [阶段 3：记忆](phase-3.md)
