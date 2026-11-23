@@ -49,7 +49,7 @@
 
 | action | 含义 |
 | --- | --- |
-| `execute` | active，工具调用被放行 |
+| `execute` | active，工具调用被放行，或 `swarm.routing` 改派了角色 |
 | `block` | 调用被挡住。低于阈值、裁判拒绝、人拒绝，或会挡住工具的点发生裁判失败，都是这个动作 |
 | `follow_up` | active，向模型送回了一条 follow-up |
 | `rewrite` | active，写入了新的 task frame，或改写了工具输出 |
@@ -63,9 +63,9 @@
 
 会话跑起来之后，父循环上的七个点才会改行为。模式仍是 `active`、`shadow`、`off`。`shadow` 询问并写 ledger，不改变这次调用、这段输出或这次回合。`off` 不询问。
 
-`tool.approval` 看的是 `bash`，以及路径不在项目目录内的 `write` 和 `edit`。项目内的 `write` 和 `edit` 不询问这一点。放行条件是裁决答案为允许，并且该答案的概率达到阈值：
+`tool.approval` 看的是 `bash`，路径不在项目目录内的 `write` 和 `edit`，以及拉起子 agent。项目内的 `write` 和 `edit` 不询问这一点。放行条件是裁决答案为允许，并且该答案的概率达到阈值：
 
-- 一般命令、项目外写入：`thresholds.approval`，默认 `0.80`
+- 一般命令、项目外写入、拉起子 agent：`thresholds.approval`，默认 `0.80`
 - 项目内的测试或 lint：命令以 `pytest` 或 `ruff` 开头，前面可以是 `uv run` 或 `python -m`。用 `thresholds.approval_check`，默认 `0.70`
 
 交互界面里，允许但低于阈值时会询问。拒绝则挡住。`sillward --print`（`-p`）以及其它没有界面的运行（包括夜间评测）里，低于阈值直接挡住，理由交回模型，不会等待输入。概率刚好达到阈值就执行，不再询问。
@@ -103,8 +103,20 @@ Applicable lessons:
 <用户原文>
 ```
 
-模型看到的是这段文字，会话里记下的用户消息也是这段。没选中的正文不出现。`shadow` 不改用户消息；ledger 的 `answer` 是本会送入的 lesson id，不是正文。刚捕获的那条不进入同一条用户消息，从下一条用户消息起才参与 recall。
+模型看到的是这段文字，会话里记下的用户消息也是这段。没选中的正文不出现。`shadow` 不改用户消息；ledger 的 `answer` 是本会送入的 lesson id，不是正文。刚捕获的那条不进入同一条用户消息，从下一条用户消息起才参与 recall。父会话和三个角色调用同一个选择。子会话看到的是它自己的任务文本，前面可以有选中的 lessons。
 
 `memory.worth` 的候选是 `reusable`、`once`、`known`。active 时只有 `reusable` 会追加，来源是 `agent`。`once` 和 `known` 不写。没有单独的命令；父会话在记下 agent 自己提出的 lesson 时才问这个点。
 
 子会话的捕获请求和 worth 请求直接丢弃，不询问裁判，不写文件。ledger 的动作是 `discard`。
+
+## 角色
+
+父 agent 用工具 `agent` 做一层委托。参数是 `role`、`task`、`prefix`。`role` 是 `implementer`、`reviewer` 或 `explorer`。reviewer 的 `task` 里放要看的 diff，explorer 的 `task` 里放要找的目标。`prefix` 是 implementer 可以 `write` 和 `edit` 的目录。
+
+子会话使用父 agent 当时的模型 id 和 thinking level。子会话没有 `agent` 工具，不能再委托。reviewer 和 explorer 只有 `read`。implementer 还有 `write`、`edit`、`bash`。
+
+前缀外的 `write` 或 `edit` 在文件被改之前失败。这个检查不询问裁判。`bash` 不按路径前缀拦住。拉起子 agent 在 `tool.approval` 为 `active` 时要过一般阈值；子会话里随后的命令不再单独询问。
+
+`swarm.routing` 的候选是这三个角色。默认 `shadow`：询问并写 ledger，子会话仍用父 agent 指定的角色。`active` 时，裁决概率达到 `thresholds.routing_override`（默认 `0.80`）并且和指定角色不同，才改派。低于这个数不改派。ledger 在改派时的动作是 `execute`，不改派时是 `unchanged`。
+
+`swarm.patch` 只看 implementer 这次 `agent` 调用的结果。候选是 `within` 和 `beyond`。默认 `shadow`：询问并写 ledger，不撤回已经写下的文件，也不替换交回父 agent 的文字。动作是 `unchanged`。

@@ -35,7 +35,7 @@ tau 随安装自带的内置扩展仍会加载。`--no-extensions` 关掉的是�
 
 默认每个决策点都是 `shadow`：会询问并记账，但不挡住命令、不改写工具输出、不追加 follow-up、不写 lesson、不把 lesson 放进用户消息。把某个点设成 `active` 之后，下面这些行为才会出现。细节和阈值见 [配置](config.md)。
 
-- `tool.approval`：`bash`，以及路径落到项目外的 `write` / `edit`。达到阈值才执行。交互界面里低于阈值会询问；`sillward --print`（`-p`）和没有界面的运行里低于阈值直接挡住，理由回到模型，不会等待输入。项目内的 `write` 和 `edit` 不经过这一点。
+- `tool.approval`：`bash`，路径落到项目外的 `write` / `edit`，以及拉起子 agent。达到阈值才执行。交互界面里低于阈值会询问；`sillward --print`（`-p`）和没有界面的运行里低于阈值直接挡住，理由回到模型，不会等待输入。项目内的 `write` 和 `edit` 不经过这一点。拉起子 agent 用一般阈值，默认 `0.80`。
 - `tool.constraint`：`bash`、`write`、`edit` 被判为违反已陈述的约束时挡住。
 - `tool.injection`：从 `bash` 输出里去掉被判为给模型的指令段落。其它工具只在输出很长时才分段检查。
 - `tool.admission`：很长的工具输出里，当前用不上的段落换成 `[omitted]`。
@@ -43,10 +43,22 @@ tau 随安装自带的内置扩展仍会加载。`--no-extensions` 关掉的是�
 - `turn.completion`：模型声称完成且这次用户消息里没有跑过 `pytest` 或 `ruff` 时，送回一次。
 - `task.frame`：用户消息改变了任务时，把新的 frame 记在这次会话里。用户看到的那条消息原文不变。
 - `memory.capture`：这条用户消息被判为纠正或规则时，往项目的 `.sillward/lessons.jsonl` 追加一条。两端空白去掉、连续空白收成一个空格之后正文相同，就不追加第二条。正文不同的两条都留着。扩展送回的 follow-up 不会被当成用户纠正。
-- `memory.recall`：已有 lessons 里被选中的条目，写到模型看到的这条用户消息前面。没选中的不出现。
+- `memory.recall`：已有 lessons 里被选中的条目，写到模型看到的这条用户消息前面。没选中的不出现。父会话和三个角色用同一条规则。
 - `memory.worth`：父会话记下的、agent 自己提出的 lesson，只有被判为可复用才写入同一文件。没有单独的命令。
+- `swarm.routing`：父 agent 用 `agent` 工具指定角色之后，裁判可以另选一个角色。`shadow` 只记账，子会话仍是指定的那个角色。`active` 时，只有那个答案的概率达到 `routing_override`（默认 `0.80`）并且和指定角色不同，才改派。
+- `swarm.patch`：implementer 返回之后，裁判判断改动是否越出任务和路径。`shadow` 只记账，不撤回已经写上的文件，也不改写交回父 agent 的结果。
 
-`shadow` 下这些都不会发生，ledger 里仍有对应的一行。会挡住工具的点如果裁判失败，即使当时是 `shadow` 也会挡住该次调用。子会话的捕获不写 lessons 文件。
+`shadow` 下，上面这些点不改变命令、输出、回合、lesson 或角色。ledger 里仍有对应的一行。会挡住工具的点如果裁判失败，即使当时是 `shadow` 也会挡住该次调用。子会话的捕获不写 lessons 文件。
+
+父 agent 可以通过工具 `agent` 做一层委托。参数是角色名、任务文本、路径前缀。reviewer 的任务文本里放要看的 diff，explorer 的任务文本里放要找的目标。三个角色用和父 agent 相同的模型。子会话不能再委托。
+
+| 角色 | 工具 |
+| --- | --- |
+| implementer | `read`、`write`、`edit`、`bash` |
+| reviewer | `read` |
+| explorer | `read` |
+
+implementer 的 `write` 和 `edit` 必须落在给定前缀里。前缀外的调用在改文件之前失败。这条检查不经过裁判。`bash` 不按前缀拦住。拉起子 agent 在 `tool.approval` 为 `active` 时要过一般阈值；子会话里随后的命令不再单独询问。
 
 ## 配置
 

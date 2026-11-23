@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
 from tau_agent.messages import TextContent
+from tau_agent.tools import AgentTool, ToolCancellationToken, ToolUpdateCallback
+from tau_agent.types import JSONValue
 from tau_coding.extensions.api import (
     ExtensionAPI,
     ExtensionContext,
@@ -18,6 +21,7 @@ from tau_coding.extensions.api import (
     ToolResultHookResult,
     TurnEndEvent,
 )
+from tau_coding.session import CodingSession
 
 from sillward.config import Config, load_config
 from sillward.gates import admission, approval, constraint, frame, injection, turn
@@ -28,6 +32,8 @@ from sillward.kernel.runner import Kernel
 from sillward.memory.capture import consider_user
 from sillward.memory.recall import apply as apply_recall
 from sillward.memory.store import LessonStore
+from sillward.roles.spawn import delegate
+from sillward.teamwork import patch
 
 
 class _ParentLoop:
@@ -42,11 +48,67 @@ class _ParentLoop:
         self._state = LoopState()
 
     def register(self) -> None:
-        """Subscribe the four parent-loop hooks."""
+        """Subscribe the parent-loop hooks and the agent tool."""
         self._tau.on("input", self.on_input)
         self._tau.on("tool_call", self.on_tool_call)
         self._tau.on("tool_result", self.on_tool_result)
         self._tau.on("turn_end", self.on_turn_end)
+        self._tau.register_tool(self._agent_tool())
+
+    def _agent_tool(self) -> AgentTool:
+        loop = self
+
+        async def execute(
+            tool_call_id: str,
+            arguments: Mapping[str, JSONValue],
+            signal: ToolCancellationToken | None = None,
+            on_update: ToolUpdateCallback | None = None,
+        ):
+            del tool_call_id, signal, on_update
+            kernel, config = loop._ready(loop._tau.context)
+            if loop._store is None:
+                raise RuntimeError("lessons are not ready")
+            return await delegate(
+                arguments,
+                kernel=kernel,
+                store=loop._store,
+                parent=loop._parent_session(),
+                paths=loop._tau.context.paths,
+                trusted=loop._tau.context.project_trusted,
+                routing_threshold=config.thresholds.routing_override,
+            )
+
+        return AgentTool(
+            name="agent",
+            label="agent",
+            description=(
+                "Delegate one task to a child role. The role is implementer, reviewer, "
+                "or explorer. The task for a reviewer includes the diff, and the task for "
+                "an explorer includes the target. prefix is the directory an implementer "
+                "may write. The child cannot delegate."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": ["implementer", "reviewer", "explorer"],
+                    },
+                    "task": {"type": "string"},
+                    "prefix": {"type": "string"},
+                },
+                "required": ["role", "task", "prefix"],
+            },
+            execute_fn=execute,
+            execution_mode="sequential",
+        )
+
+    def _parent_session(self) -> CodingSession:
+        """Return the bound coding session. Its provider is what the child reuses."""
+        session = self._tau.context._runtime.session_view
+        if not isinstance(session, CodingSession):
+            raise RuntimeError("delegation needs the bound coding session")
+        return session
 
     def _ready(self, context: ExtensionContext) -> tuple[Kernel, Config]:
         if self._kernel is None or self._config is None:
@@ -107,8 +169,9 @@ class _ParentLoop:
         event: ToolResultHookEvent,
         context: ExtensionContext,
     ) -> ToolResultHookResult | None:
-        """Strip marked paragraphs, then replace unused parts of a long result."""
+        """Revise tool text, and record an implementer patch without rejecting it."""
         kernel, config = self._ready(context)
+        patch.consider(kernel, event)
         injected = await injection.revise(kernel, config, event)
         current = event
         if injected is not None:

@@ -1,4 +1,4 @@
-"""tool.approval on bash and on writes that leave the project."""
+"""tool.approval on bash, writes that leave the project, and spawning a child."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from sillward.gates.support import (
 from sillward.kernel.runner import Kernel
 
 _CANDIDATES = ("allow", "deny")
-_TOOLS = frozenset({"bash", "write", "edit"})
+_TOOLS = frozenset({"agent", "bash", "write", "edit"})
 
 
 async def consider(
@@ -41,7 +41,10 @@ async def consider(
     else:
         threshold = config.thresholds.approval
     detail = command
-    if event.tool_name != "bash":
+    if event.tool_name == "agent":
+        raw_role = event.arguments.get("role")
+        detail = raw_role if isinstance(raw_role, str) else ""
+    elif event.tool_name != "bash":
         raw_path = event.arguments.get("path")
         detail = raw_path if isinstance(raw_path, str) else ""
     opened = kernel.open(
