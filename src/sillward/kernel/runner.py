@@ -27,9 +27,12 @@ class Judge(Protocol):
 class Decision:
     """What the caller should do with one consultation.
 
-    ``action`` is ``block`` when a tool-blocking point's judge failed,
-    ``off`` when the point is off or a non-blocking point's judge failed,
-    and ``unchanged`` when a verdict was recorded and no gate has applied it.
+    ``action`` is ``block`` when a tool-blocking point's judge failed or a gate
+    refused the call, ``off`` when the point is off or a non-blocking point's
+    judge failed, ``execute`` when an active gate let the call proceed,
+    ``follow_up`` when an active gate sent the turn back, ``rewrite`` when an
+    active gate stored a new frame or replaced tool text, and ``unchanged``
+    when a verdict was recorded without changing behavior.
     """
 
     point: str
@@ -38,8 +41,19 @@ class Decision:
     answer: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class Consultation:
+    """A judge result that has not been written to the ledger yet."""
+
+    request: Request
+    mode: str
+    verdict: Verdict | None
+    failure_action: str
+    adapter: str | None
+
+
 class Kernel:
-    """The phase-1 kernel. It does not register tau hooks."""
+    """Ask the judge and append one ledger row. It does not register tau hooks."""
 
     def __init__(self, *, config: Config, judge: Judge, project: Path) -> None:
         self._config = config
@@ -47,16 +61,25 @@ class Kernel:
         self._ledger = Ledger(project, record_state=config.record_state)
 
     def consult(self, request: Request) -> Decision:
-        """Consult one point and append exactly one ledger row."""
+        """Consult one point and append exactly one ledger row.
+
+        Gates that still have to ask a person use :meth:`open` and
+        :meth:`commit` so the row's action is the action they actually took.
+        """
+        opened = self.open(request)
+        if opened.verdict is None:
+            return self.commit(opened, action=opened.failure_action)
+        return self.commit(opened, action="unchanged")
+
+    def open(self, request: Request) -> Consultation:
+        """Resolve the mode and the verdict without writing the ledger."""
         mode = self._config.mode(request.point)
         if mode == "off":
-            return self._finish(
-                request,
+            return Consultation(
+                request=request,
                 mode=mode,
-                action="off",
-                answer=None,
-                probabilities=None,
-                elapsed_ms=None,
+                verdict=None,
+                failure_action="off",
                 adapter=None,
             )
         try:
@@ -64,19 +87,38 @@ class Kernel:
             check_verdict(request, verdict)
         except (JudgeFailure, ProtocolFailure):
             action = "block" if blocks_tool(request.point) else "off"
-            return self._finish(
-                request,
+            return Consultation(
+                request=request,
                 mode=mode,
+                verdict=None,
+                failure_action=action,
+                adapter=self._judge.name,
+            )
+        return Consultation(
+            request=request,
+            mode=mode,
+            verdict=verdict,
+            failure_action="",
+            adapter=verdict.adapter,
+        )
+
+    def commit(self, consultation: Consultation, *, action: str) -> Decision:
+        """Append one ledger row for a consultation opened earlier."""
+        verdict = consultation.verdict
+        if verdict is None:
+            return self._finish(
+                consultation.request,
+                mode=consultation.mode,
                 action=action,
                 answer=None,
                 probabilities=None,
                 elapsed_ms=None,
-                adapter=self._judge.name,
+                adapter=consultation.adapter,
             )
         return self._finish(
-            request,
-            mode=mode,
-            action="unchanged",
+            consultation.request,
+            mode=consultation.mode,
+            action=action,
             answer=verdict.answer,
             probabilities=verdict.probabilities,
             elapsed_ms=verdict.elapsed_ms,

@@ -43,6 +43,40 @@
 
 默认字段只有：`point`、`answer`、`probabilities`、`elapsed_ms`、`mode`、`adapter`、`action`。其中没有用户原文、工具参数和文件内容。
 
-`action` 在本阶段有三种：`block`（会挡住工具的点在裁判失败时挡住）、`off`（其余点的裁判失败，或该点模式本来就是 `off`）、`unchanged`（裁决已经记下，还没有门去执行、送回或写入记忆）。
-
 `record_state` 为 `true` 时，同一行多一个 `request`。其中 `parameters`、`file_content` 以及同类的参数、正文和密钥字段会变成 `[redacted]`。`frame_summary` 保留，调用方应传入摘要，而不是整段用户原文。
+
+`action` 是这次裁决之后实际发生的事：
+
+| action | 含义 |
+| --- | --- |
+| `execute` | active，工具调用被放行 |
+| `block` | 调用被挡住。低于阈值、裁判拒绝、人拒绝，或会挡住工具的点发生裁判失败，都是这个动作 |
+| `follow_up` | active，向模型送回了一条 follow-up |
+| `rewrite` | active，写入了新的 task frame，或改写了工具输出 |
+| `unchanged` | 裁决已记下，行为没有改变。`shadow` 下成功的裁决用这个动作 |
+| `off` | 该点模式是 `off`，或一个不会挡住工具的点发生了裁判失败 |
+
+## 父循环上的门
+
+会话跑起来之后，父循环上的七个点才会改行为。模式仍是 `active`、`shadow`、`off`。`shadow` 询问并写 ledger，不改变这次调用、这段输出或这次回合。`off` 不询问。
+
+`tool.approval` 看的是 `bash`，以及路径不在项目目录内的 `write` 和 `edit`。项目内的 `write` 和 `edit` 不询问这一点。放行条件是裁决答案为允许，并且该答案的概率达到阈值：
+
+- 一般命令、项目外写入：`thresholds.approval`，默认 `0.80`
+- 项目内的测试或 lint：命令以 `pytest` 或 `ruff` 开头，前面可以是 `uv run` 或 `python -m`。用 `thresholds.approval_check`，默认 `0.70`
+
+交互界面里，允许但低于阈值时会询问。拒绝则挡住。`sillward --print`（`-p`）以及其它没有界面的运行（包括夜间评测）里，低于阈值直接挡住，理由交回模型，不会等待输入。概率刚好达到阈值就执行，不再询问。
+
+`tool.constraint` 看 `bash`、`write`、`edit`。active 时，裁决为违反已陈述的约束就挡住。
+
+`tool.approval` 和 `tool.constraint` 在裁判超时、HTTP 错误或协议外内容时挡住该次调用，不论当前是 `active` 还是 `shadow`。
+
+`tool.injection` 把 `bash` 输出按空行分段。其它工具的输出只有不少于 4000 个字符时才分段。active 时，被判为指向模型的指令段落不会进入上下文。`shadow` 时原文保留。
+
+`tool.admission` 只处理不少于 4000 个字符的工具输出，同样按空行分段。active 时，当前用得上的段落保留，其余换成指针 `[omitted]`。`shadow` 时原文保留。
+
+`turn.continue` 在回合已经停住（没有继续调用工具）且裁决为继续时，用 follow-up 把回合送回去。同一条用户消息最多两次。送回的文字是：`Continue the authorized work. Do the next step now.`
+
+`turn.completion` 在模型停住并声称完成、而这轮用户消息里没有实际跑过 `pytest` 或 `ruff` 时，送回一次：`You claimed the work was complete without a verification action. Run the project's tests or lint, then continue.` 同一条用户消息只送这一次。若两点都要送，先送 completion 这一条。
+
+`task.frame` 判断这条用户消息是新任务、硬约束、纠正、子目标，还是无变化。active 时，只有这次不是无变化、并且和会话里已经记下的 frame 不同，才写一条新的 frame。用户消息原文不改。`shadow` 只记账。这个 frame 随会话结束，不是 lesson。

@@ -45,10 +45,24 @@ def test_version_prints_own_version_and_pinned_tau_ai() -> None:
 
 
 def test_pytest_can_import_setup() -> None:
-    """Tau's entry point imports and accepts the API object without registering anything."""
+    """Tau's entry point imports and registers the parent-loop hooks."""
     from sillward.extension import setup
 
-    assert setup(object()) is None
+    events: list[str] = []
+
+    class _Api:
+        def on(self, event: str, handler: object = None) -> object:
+            def decorate(function: object) -> object:
+                events.append(event)
+                return function
+
+            if handler is None:
+                return decorate
+            events.append(event)
+            return handler
+
+    assert setup(_Api()) is None
+    assert events == ["input", "tool_call", "tool_result", "turn_end"]
 
 
 def _load_extensions(args: list[str], *, root: Path, cwd: Path):

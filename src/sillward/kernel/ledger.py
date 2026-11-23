@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,7 @@ class Ledger:
     def __init__(self, project: Path, *, record_state: bool) -> None:
         self.path = project / ".sillward" / "ledger.jsonl"
         self.record_state = record_state
+        self._lock = threading.Lock()
 
     def append(self, entry: LedgerEntry, request: Request | None = None) -> None:
         """Append one JSON object. The request is included only when recording state."""
@@ -77,10 +79,11 @@ class Ledger:
             if request is None:
                 raise ValueError("record_state requires the request")
             payload["request"] = sanitized_request(request)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
 
 
 def sanitized_request(request: Request) -> dict[str, object]:
