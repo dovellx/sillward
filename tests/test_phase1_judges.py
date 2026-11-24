@@ -73,10 +73,10 @@ def test_llm_judge_uses_the_model_tau_has_logged_in(tmp_path: Path) -> None:
     home.mkdir()
     paths = TauPaths(home=home)
     save_default_provider_model(provider_name="openai", model="gpt-4o", paths=paths)
-    FileCredentialStore(home / "credentials.json").set("openai", "sk-logged-in")
+    FileCredentialStore(home / "credentials.json").set("openai", "sk-stored")
     client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_RESPONSES))
 
-    verdict = LlmJudge.from_tau(home=home, environ={}, client=client).judge(
+    verdict = LlmJudge.from_tau(home=home, api_key="sk-from-config", client=client).judge(
         _request("task.frame", summary="short-summary")
     )
 
@@ -85,7 +85,7 @@ def test_llm_judge_uses_the_model_tau_has_logged_in(tmp_path: Path) -> None:
     assert seen["url"] == "https://api.openai.com/v1/responses"
     assert body["model"] == "gpt-4o"
     assert body["stream"] is False
-    assert seen["authorization"] == "Bearer sk-logged-in"
+    assert seen["authorization"] == "Bearer sk-from-config"
     assert "short-summary" in json.dumps(body)
     assert verdict.answer == "ship"
     assert dict(verdict.probabilities) == {"ship": 0.81, "hold": 0.19}
@@ -94,8 +94,10 @@ def test_llm_judge_uses_the_model_tau_has_logged_in(tmp_path: Path) -> None:
     client.close()
 
 
-def test_environment_api_key_is_sent_ahead_of_the_stored_credential(tmp_path: Path) -> None:
-    """Preferring the credential file would send sk-stored while the env key is set."""
+def test_config_api_key_is_sent_instead_of_env_or_stored_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading OPENAI_API_KEY or the credential file would send a key the config did not name."""
     from tau_coding.credentials import FileCredentialStore
 
     from sillward.judges.llm import LlmJudge
@@ -103,13 +105,14 @@ def test_environment_api_key_is_sent_ahead_of_the_stored_credential(tmp_path: Pa
     home = tmp_path / "tau"
     home.mkdir()
     FileCredentialStore(home / "credentials.json").set("openai", "sk-stored")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
     client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_RESPONSES))
 
-    LlmJudge.from_tau(home=home, environ={"OPENAI_API_KEY": "sk-from-env"}, client=client).judge(
+    LlmJudge.from_tau(home=home, api_key="sk-from-config", client=client).judge(
         _request("task.frame")
     )
 
-    assert seen["authorization"] == "Bearer sk-from-env"
+    assert seen["authorization"] == "Bearer sk-from-config"
     client.close()
 
 
@@ -189,20 +192,26 @@ def test_llm_judge_failures_hide_the_body_and_do_not_return_a_verdict(handler) -
     client.close()
 
 
-def test_missing_tau_credentials_fail_before_any_http_call(tmp_path: Path) -> None:
-    """A missing login must not post to the provider."""
+def test_missing_config_api_key_fails_before_any_http_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stored credential or OPENAI_API_KEY must not fill in a blank config key."""
+    from tau_coding.credentials import FileCredentialStore
+
     from sillward.judges.base import JudgeFailure
     from sillward.judges.llm import LlmJudge
 
     home = tmp_path / "tau"
     home.mkdir()
+    FileCredentialStore(home / "credentials.json").set("openai", "sk-stored")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
 
     def _refuse(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"posted to {request.url}")
 
     client = httpx.Client(transport=httpx.MockTransport(_refuse), trust_env=False)
-    with pytest.raises(JudgeFailure):
-        LlmJudge.from_tau(home=home, environ={}, client=client).judge(_request("task.frame"))
+    with pytest.raises(JudgeFailure, match="missing api key"):
+        LlmJudge.from_tau(home=home, api_key="", client=client).judge(_request("task.frame"))
     client.close()
 
 
@@ -227,11 +236,9 @@ def test_unsupported_tau_provider_fails_before_any_http_call(tmp_path: Path) -> 
 
     client = httpx.Client(transport=httpx.MockTransport(_refuse), trust_env=False)
     with pytest.raises(JudgeFailure):
-        LlmJudge.from_tau(
-            home=home,
-            environ={"ANTHROPIC_API_KEY": "sk-anthropic"},
-            client=client,
-        ).judge(_request("task.frame"))
+        LlmJudge.from_tau(home=home, api_key="sk-from-config", client=client).judge(
+            _request("task.frame")
+        )
     client.close()
 
 
@@ -247,7 +254,7 @@ def test_llm_failure_blocks_a_tool_point_without_writing_the_key(tmp_path: Path)
         lambda _request: httpx.Response(503, text=f"down {API_KEY} {FILE_CONTENT}")
     )
     decision = Kernel(
-        config=load_config(home=tmp_path / "home", project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=LlmJudge(
             endpoint=ModelEndpoint(
                 model="gpt-4o",
@@ -379,19 +386,17 @@ def test_judge_selection_follows_config_and_falls_back_without_a_key(tmp_path: P
     from sillward.config import load_config
     from sillward.judges.factory import select_judge
 
-    home = tmp_path / "home"
     project = tmp_path / "project"
     project.mkdir()
     tau_home = tmp_path / "tau"
     tau_home.mkdir()
-    destination = home / ".sillward"
+    destination = project / ".sillward"
     destination.mkdir(parents=True)
     config_path = destination / "config.json"
     client = httpx.Client(trust_env=False)
 
     config_path.write_text(json.dumps({"judge": "llm"}), encoding="utf-8")
     llm_config = load_config(
-        home=home,
         project=project,
         environ={"TYPESAFE_API_KEY": "sk-jev"},
     )
@@ -407,7 +412,7 @@ def test_judge_selection_follows_config_and_falls_back_without_a_key(tmp_path: P
         json.dumps({"judge": "jev", "jev_model": "system-one"}),
         encoding="utf-8",
     )
-    jev_config = load_config(home=home, project=project, environ={})
+    jev_config = load_config(project=project, environ={})
     assert select_judge(jev_config, environ={}, tau_home=tau_home, client=client).name == "llm"
     selected = select_judge(
         jev_config,
@@ -416,4 +421,39 @@ def test_judge_selection_follows_config_and_falls_back_without_a_key(tmp_path: P
         client=client,
     )
     assert selected.name == "jev"
+    client.close()
+
+
+def test_selected_llm_judge_sends_the_project_config_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Selecting the llm adapter without the config key would send the env or stored key."""
+    from tau_coding.credentials import FileCredentialStore
+
+    from sillward.config import load_config
+    from sillward.judges.factory import select_judge
+
+    project = tmp_path / "project"
+    destination = project / ".sillward"
+    destination.mkdir(parents=True)
+    (destination / "config.json").write_text(
+        json.dumps({"judge": "llm", "llm_api_key": "sk-from-project"}),
+        encoding="utf-8",
+    )
+    tau_home = tmp_path / "tau"
+    tau_home.mkdir()
+    FileCredentialStore(tau_home / "credentials.json").set("openai", "sk-stored")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_RESPONSES))
+    judge = select_judge(
+        load_config(project=project, environ={}),
+        environ={"TYPESAFE_API_KEY": "sk-jev"},
+        tau_home=tau_home,
+        client=client,
+    )
+
+    judge.judge(_request("task.frame"))
+
+    assert judge.name == "llm"
+    assert seen["authorization"] == "Bearer sk-from-project"
     client.close()

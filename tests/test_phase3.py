@@ -257,12 +257,9 @@ def _kernel(tmp: Path, judge: object, overlay: Mapping[str, str]):
     from sillward.config import load_config
     from sillward.kernel.runner import Kernel
 
-    home = tmp / "home"
     project = tmp / "project"
-    home.mkdir(parents=True, exist_ok=True)
     project.mkdir(parents=True, exist_ok=True)
     config = load_config(
-        home=home,
         project=project,
         environ={"SILLWARD_MODE_OVERLAY": json.dumps(overlay)} if overlay else {},
     )

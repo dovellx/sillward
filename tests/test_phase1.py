@@ -66,21 +66,25 @@ def _judge(kind: str):
     raise AssertionError(kind)
 
 
-def _write_project_configs(project: Path) -> None:
+def _write_ignored_configs(home: Path, project: Path) -> None:
     """Plant config files a loader must not read."""
-    nested = project / ".sillward"
-    nested.mkdir(parents=True)
+    project.mkdir(parents=True, exist_ok=True)
     payload = {
         "judge": "jev",
-        "jev_model": "from-project",
+        "jev_model": "from-ignored-file",
+        "llm_api_key": "sk-from-ignored-file",
         "modes": {"default": "active", "tool.approval": "active", "turn.continue": "off"},
         "thresholds": {"approval": 0.1, "approval_check": 0.1, "routing_override": 0.1},
         "record_state": True,
     }
     text = json.dumps(payload)
-    (nested / "config.json").write_text(text, encoding="utf-8")
     (project / "config.json").write_text(text, encoding="utf-8")
     (project / "sillward.json").write_text(text, encoding="utf-8")
+    (project / ".sillward").mkdir(parents=True, exist_ok=True)
+    (project / ".sillward" / "config-template.json").write_text(text, encoding="utf-8")
+    destination = home / ".sillward"
+    destination.mkdir(parents=True)
+    (destination / "config.json").write_text(text, encoding="utf-8")
 
 
 def _ledger_text(project: Path) -> str:
@@ -114,7 +118,7 @@ def test_fake_judge_answer_is_written_to_the_ledger(tmp_path: Path) -> None:
     project.mkdir()
     judge = FakeJudge(answer="ship", probabilities={"ship": 0.81, "hold": 0.19}, elapsed_ms=12.5)
     kernel = Kernel(
-        config=load_config(home=tmp_path / "home", project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=judge,
         project=project,
     )
@@ -140,7 +144,7 @@ def test_default_ledger_row_omits_source_text_parameters_and_file_content(tmp_pa
     project = tmp_path / "project"
     project.mkdir()
     kernel = Kernel(
-        config=load_config(home=tmp_path / "home", project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=FakeJudge(
             answer="ship",
             probabilities={"ship": 0.81, "hold": 0.19},
@@ -178,7 +182,7 @@ def test_blocking_points_block_when_the_judge_fails(tmp_path: Path, point: str, 
     project = tmp_path / "project"
     project.mkdir()
     decision = Kernel(
-        config=load_config(home=tmp_path / "home", project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=_judge(kind),
         project=project,
     ).consult(_request(point))
@@ -210,7 +214,7 @@ def test_other_points_are_treated_as_off_when_the_judge_fails(
     project = tmp_path / "project"
     project.mkdir()
     decision = Kernel(
-        config=load_config(home=tmp_path / "home", project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=_judge(kind),
         project=project,
     ).consult(_request(point))
@@ -224,21 +228,22 @@ def test_other_points_are_treated_as_off_when_the_judge_fails(
     assert row["point"] == point
 
 
-def test_project_directory_config_cannot_change_judge_or_modes(
+def test_home_and_loose_files_cannot_change_judge_or_modes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reading a project file would adopt its judge and active modes."""
+    """Reading the home file, the template, or a loose file would adopt its judge."""
     from sillward.config import load_config
 
     home = tmp_path / "home"
     project = tmp_path / "project"
-    _write_project_configs(project)
+    _write_ignored_configs(home, project)
     monkeypatch.chdir(project)
 
-    config = load_config(home=home, project=project, environ={})
+    config = load_config(project=project, environ={})
 
     assert config.judge == "llm"
     assert config.jev_model is None
+    assert config.llm_api_key is None
     assert config.record_state is False
     assert config.thresholds.approval == 0.8
     assert config.thresholds.approval_check == 0.7
@@ -246,23 +251,22 @@ def test_project_directory_config_cannot_change_judge_or_modes(
     assert {config.mode(point) for point in ALL_POINTS} == {"shadow"}
 
 
-def test_user_config_is_read_from_the_home_directory(
+def test_user_config_is_read_from_the_project_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ignoring the home file keeps the shadow defaults and drops a non-default mode."""
+    """Ignoring .sillward/config.json keeps the shadow defaults and drops a non-default mode."""
     from sillward.config import load_config
 
     home = tmp_path / "home"
     project = tmp_path / "project"
-    _write_project_configs(project)
+    _write_ignored_configs(home, project)
     monkeypatch.chdir(project)
-    destination = home / ".sillward"
-    destination.mkdir(parents=True)
-    (destination / "config.json").write_text(
+    (project / ".sillward" / "config.json").write_text(
         json.dumps(
             {
                 "judge": "jev",
                 "jev_model": "system-one",
+                "llm_api_key": "sk-from-project",
                 "modes": {"default": "active", "tool.approval": "off"},
                 "thresholds": {"approval": 0.55},
                 "record_state": False,
@@ -271,10 +275,11 @@ def test_user_config_is_read_from_the_home_directory(
         encoding="utf-8",
     )
 
-    config = load_config(home=home, project=project, environ={})
+    config = load_config(project=project, environ={})
 
     assert config.judge == "jev"
     assert config.jev_model == "system-one"
+    assert config.llm_api_key == "sk-from-project"
     assert config.mode("tool.approval") == "off"
     assert config.mode("task.frame") == "active"
     assert config.mode("turn.continue") == "active"
@@ -287,17 +292,15 @@ def test_user_config_is_read_from_the_home_directory(
 def test_mode_overlay_changes_only_the_parse_that_receives_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Writing the overlay into the home file would change the next parse too."""
+    """Writing the overlay into the project config would change the next parse too."""
     from sillward.config import ConfigError, load_config
 
     home = tmp_path / "home"
     project = tmp_path / "project"
-    _write_project_configs(project)
+    _write_ignored_configs(home, project)
     monkeypatch.chdir(project)
     monkeypatch.delenv("SILLWARD_MODE_OVERLAY", raising=False)
-    destination = home / ".sillward"
-    destination.mkdir(parents=True)
-    user_file = destination / "config.json"
+    user_file = project / ".sillward" / "config.json"
     user_file.write_text(
         json.dumps(
             {
@@ -309,10 +312,10 @@ def test_mode_overlay_changes_only_the_parse_that_receives_it(
         encoding="utf-8",
     )
     before = user_file.read_text(encoding="utf-8")
+    home_before = (home / ".sillward" / "config.json").read_text(encoding="utf-8")
     overlay = json.dumps({"tool.approval": "active", "turn.continue": "off"})
 
     seen = load_config(
-        home=home,
         project=project,
         environ={"SILLWARD_MODE_OVERLAY": overlay, "TYPESAFE_API_KEY": API_KEY},
     )
@@ -322,14 +325,14 @@ def test_mode_overlay_changes_only_the_parse_that_receives_it(
     assert seen.mode("turn.continue") == "off"
     assert seen.mode("task.frame") == "shadow"
     assert user_file.read_text(encoding="utf-8") == before
+    assert (home / ".sillward" / "config.json").read_text(encoding="utf-8") == home_before
     assert "SILLWARD_MODE_OVERLAY" not in os.environ
-    again = load_config(home=home, project=project, environ={})
+    again = load_config(project=project, environ={})
     assert again.mode("tool.approval") == "off"
     assert again.mode("turn.continue") == "shadow"
     assert again.judge == "jev"
     with pytest.raises(ConfigError):
         load_config(
-            home=home,
             project=project,
             environ={"SILLWARD_MODE_OVERLAY": json.dumps({"judge": "llm"})},
         )
@@ -347,17 +350,16 @@ def test_off_mode_does_not_ask_the_judge(tmp_path: Path) -> None:
         def judge(self, request: object) -> object:
             raise AssertionError(f"off mode asked the judge about {request!r}")
 
-    home = tmp_path / "home"
     project = tmp_path / "project"
     project.mkdir()
-    destination = home / ".sillward"
+    destination = project / ".sillward"
     destination.mkdir(parents=True)
     (destination / "config.json").write_text(
         json.dumps({"modes": {"task.frame": "off"}}),
         encoding="utf-8",
     )
     kernel = Kernel(
-        config=load_config(home=home, project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=_CallsJudge(),
         project=project,
     )
@@ -380,17 +382,16 @@ def test_recorded_state_redacts_parameters_and_file_content(tmp_path: Path) -> N
     from sillward.judges.fake import FakeJudge
     from sillward.kernel.runner import Kernel
 
-    home = tmp_path / "home"
     project = tmp_path / "project"
     project.mkdir()
-    destination = home / ".sillward"
+    destination = project / ".sillward"
     destination.mkdir(parents=True)
     (destination / "config.json").write_text(
         json.dumps({"record_state": True}),
         encoding="utf-8",
     )
     Kernel(
-        config=load_config(home=home, project=project, environ={}),
+        config=load_config(project=project, environ={}),
         judge=FakeJudge(answer="ship", probabilities={"ship": 0.81, "hold": 0.19}, elapsed_ms=1),
         project=project,
     ).consult(_request("task.frame", summary="short-summary"))

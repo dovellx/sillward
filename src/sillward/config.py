@@ -1,6 +1,6 @@
-"""Load ``~/.sillward/config.json`` and apply the process mode overlay.
+"""Load the project ``.sillward/config.json`` and apply the process mode overlay.
 
-The project directory is not a configuration source. ``SILLWARD_MODE_OVERLAY``
+The home directory is not a configuration source. ``SILLWARD_MODE_OVERLAY``
 changes only the ``Config`` returned for the mapping that carried it.
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sillward.kernel.points import POINTS
@@ -38,6 +38,7 @@ class Config:
 
     judge: str
     jev_model: str | None
+    llm_api_key: str | None = field(repr=False)
     modes: Mapping[str, str]
     thresholds: Thresholds
     record_state: bool
@@ -50,19 +51,20 @@ class Config:
             raise ConfigError(f"unknown point {point}") from None
 
 
-def load_config(*, home: Path, project: Path, environ: Mapping[str, str]) -> Config:
-    """Load the user file under ``home`` and overlay modes from ``environ``.
+def load_config(*, project: Path, environ: Mapping[str, str]) -> Config:
+    """Load ``project / ".sillward" / "config.json"`` and overlay modes from ``environ``.
 
-    ``project`` is accepted so the caller names the workspace. No file inside
-    it is opened. A missing user file yields the plan's defaults: judge
-    ``llm``, every point ``shadow``, and the standard thresholds.
+    The home directory is not opened. Other files in ``project``, such as
+    ``config.json`` at the project root, are not opened either. A missing
+    project file yields the plan's defaults: judge ``llm``, every point
+    ``shadow``, and the standard thresholds.
     """
-    _ = project
-    raw = _read_user_config(home / ".sillward" / "config.json")
+    raw = _read_user_config(project / ".sillward" / "config.json")
     modes = _apply_overlay(_resolve_modes(raw.get("modes")), environ)
     return Config(
         judge=_judge_name(raw.get("judge")),
         jev_model=_optional_text(raw.get("jev_model"), field_name="jev_model"),
+        llm_api_key=_optional_text(raw.get("llm_api_key"), field_name="llm_api_key"),
         modes=modes,
         thresholds=_thresholds(raw.get("thresholds")),
         record_state=_flag(raw.get("record_state"), field_name="record_state"),
@@ -75,9 +77,9 @@ def _read_user_config(path: Path) -> dict[str, object]:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise ConfigError("user config is not a JSON object") from exc
+        raise ConfigError("project config is not a JSON object") from exc
     if not isinstance(loaded, dict):
-        raise ConfigError("user config is not a JSON object")
+        raise ConfigError("project config is not a JSON object")
     return loaded
 
 

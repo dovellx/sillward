@@ -1,6 +1,6 @@
 # 配置
 
-用户配置是家目录里的 `~/.sillward/config.json`。端点、密钥、模式和阈值只放在这里，或放在进程环境里。仓库不提供这份文件。项目目录中的任何文件，包括项目里的 `.sillward/config.json`，都不能改变 `judge` 或决策点的模式。
+用户配置是当前项目里的 `.sillward/config.json`。模式、阈值和 `llm` 的 API key 放在这里。家目录的 `~/.sillward/config.json` 不参与解析。项目根上的其它文件，例如 `config.json` 或 `sillward.json`，也不参与解析。这份文件含有密钥，已被 git 忽略。仓库里另有 `.sillward/config-template.json`，把文件名改成 `config.json` 后填入 `llm_api_key` 即可。模板本身不会被读取。在别的目录里运行时，读的是那个目录自己的 `.sillward/config.json`；没有文件就用下面的默认值。
 
 没有用户配置时：
 
@@ -8,10 +8,11 @@
 - 十二个决策点都是 `shadow`
 - `thresholds.approval` 为 `0.80`，`approval_check` 为 `0.70`，`routing_override` 为 `0.80`
 - `record_state` 为 `false`
+- `llm_api_key` 为空
 
 ## 字段
 
-`judge` 是 `llm` 或 `jev`。`jev_model` 是 System One 的模型 id。
+`judge` 是 `llm` 或 `jev`。`llm_api_key` 是 `llm` 裁判调用模型时用的密钥。`jev_model` 是 System One 的模型 id。
 
 `modes` 的值是 `active`、`shadow` 或 `off`。可以写 `default`，也可以按决策点 id 覆盖。没写到的点使用 `default`；没有 `default` 时，该点的声明默认是 `shadow`。
 
@@ -27,13 +28,15 @@
 
 ## 密钥与适配器
 
-密钥不写入配置文件，也不写入 ledger 的默认行。`TYPESAFE_API_KEY` 来自环境变量。
+`llm` 的密钥写在配置文件的 `llm_api_key`。它不写入 ledger 的默认行。`OPENAI_API_KEY` 和 tau home 里的 `credentials.json` 不参与这把钥匙。没写、或写成 `null` 时，询问在发出请求之前失败。
+
+`TYPESAFE_API_KEY` 仍来自环境变量，不写入配置文件。
 
 - 配置里的 `judge` 是 `jev`，并且 `TYPESAFE_API_KEY` 非空：选用 jev。
 - 配置写了 `jev` 但没有这个密钥：回到 `llm`。
 - 配置写了 `llm`：即使环境里有 `TYPESAFE_API_KEY`，仍然用 `llm`。
 
-`llm` 使用 tau 已经登录的模型。密钥先看该 provider 的环境变量（OpenAI 默认是 `OPENAI_API_KEY`），没有再看 tau home 里 `credentials.json` 的对应条目。当前会发非流式 HTTP 的只有两种 API：`openai-responses`（`{base}/responses`）和 `openai-completions`（`{base}/chat/completions`）。tau 自带目录里的 OpenAI 默认是 Responses。其它 provider API 在发出请求之前失败。
+`llm` 使用 tau 已经选好的模型和接口，密钥用上面的 `llm_api_key`。当前会发非流式 HTTP 的只有两种 API：`openai-responses`（`{base}/responses`）和 `openai-completions`（`{base}/chat/completions`）。tau 自带目录里的 OpenAI 默认是 Responses。其它 provider API 在发出请求之前失败。
 
 `jev` 按 TypeSafe System One 询问，和 mu 的 `jev-direct` 同一条接口：`POST https://api.typesafe.ai/v1/systemone`，请求体是 `model`、`state`、`questions`。`Authorization` 是 `Bearer` 加上 `TYPESAFE_API_KEY`。`jev_model` 不写时用 `jev-latest`。`choice` 题的候选是选项名，`score` 题的候选是从 0 开始的有序档位；返回的 `answers.verdict` 再收成裁决里的答案和每个候选的概率。
 

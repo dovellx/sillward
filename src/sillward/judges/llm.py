@@ -1,13 +1,11 @@
-"""Ask the model tau already has logged in, and require protocol JSON back."""
+"""Ask tau's configured model with the API key from project config."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
-from tau_coding.credentials import CredentialStoreError, FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
 from tau_coding.provider_config import (
     ProviderConfigError,
@@ -41,7 +39,7 @@ class ModelEndpoint:
 
 
 class LlmJudge:
-    """Call tau's logged-in model over HTTP and parse a protocol verdict."""
+    """Call tau's configured model over HTTP and parse a protocol verdict."""
 
     name = "llm"
 
@@ -54,18 +52,20 @@ class LlmJudge:
         cls,
         *,
         home: Path,
-        environ: Mapping[str, str],
+        api_key: str,
         client: httpx.Client,
     ) -> LlmJudge:
-        """Build a judge from tau's provider settings and credential store.
+        """Build a judge from tau's provider settings and an explicit API key.
 
         ``home`` is tau's home directory. This does not read ``~/.tau`` unless
-        the caller passes that path. A missing key or an unsupported provider
-        API is reported when ``judge`` is called, not while selecting the adapter.
+        the caller passes that path. The key is the project config value.
+        Environment variables and tau's credential file are not opened.
+        A missing key or an unsupported provider API is reported when
+        ``judge`` is called, not while selecting the adapter.
         """
         try:
-            endpoint = _endpoint_from_tau(home, environ)
-        except (ProviderConfigError, CredentialStoreError) as exc:
+            endpoint = _endpoint_from_tau(home, api_key)
+        except ProviderConfigError as exc:
             raise JudgeFailure("unavailable") from exc
         return cls(endpoint=endpoint, client=client)
 
@@ -98,7 +98,7 @@ class LlmJudge:
         )
 
 
-def _endpoint_from_tau(home: Path, environ: Mapping[str, str]) -> ModelEndpoint:
+def _endpoint_from_tau(home: Path, api_key: str) -> ModelEndpoint:
     paths = TauPaths(home=home)
     settings = _settings(paths)
     provider = settings.get_provider()
@@ -106,7 +106,7 @@ def _endpoint_from_tau(home: Path, environ: Mapping[str, str]) -> ModelEndpoint:
         model=provider.default_model,
         base_url=provider.base_url,
         api=str(getattr(provider, "api", "")),
-        api_key=_api_key(provider, environ, paths),
+        api_key=api_key.strip(),
     )
 
 
@@ -114,18 +114,3 @@ def _settings(paths: TauPaths) -> ProviderSettings:
     if provider_settings_path(paths).is_file():
         return load_provider_settings(paths)
     return ProviderSettings()
-
-
-def _api_key(provider: object, environ: Mapping[str, str], paths: TauPaths) -> str:
-    env_name = getattr(provider, "api_key_env", "")
-    if isinstance(env_name, str) and env_name:
-        from_env = environ.get(env_name, "").strip()
-        if from_env:
-            return from_env
-    credential_name = getattr(provider, "credential_name", None)
-    if not isinstance(credential_name, str) or not credential_name:
-        return ""
-    stored = FileCredentialStore(credentials_path(paths)).get(credential_name)
-    if stored is None:
-        return ""
-    return stored.strip()

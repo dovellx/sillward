@@ -1,4 +1,5 @@
-.sillward/
+.sillward/**
+!.sillward/config-template.json
 .venv/
 __pycache__/
 *.py[cod]

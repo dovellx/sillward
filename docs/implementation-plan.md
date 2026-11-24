@@ -12,17 +12,17 @@ sillward 是跑在 [huggingface/tau](https://github.com/huggingface/tau) 之上�
 | 与 tau 的关系 | 依赖 `tau-ai`，以扩展加载。不 fork harness |
 | 运行时 | Python 3.12+，uv，进程内调用 tau |
 | 许可证 | MIT |
-| 名字 | 导入、命令、发行名都是 `sillward`。源码在 `src/sillward`。用户配置在 `~/.sillward/`。项目状态在 `.sillward/` |
+| 名字 | 导入、命令、发行名都是 `sillward`。源码在 `src/sillward`。用户配置是项目里的 `.sillward/config.json`。项目状态也在 `.sillward/` |
 | 角色 | 父 agent 对用户说话。一层委托：implementer、reviewer、explorer。同一模型，同一 thinking level |
 | 判断点 | 12 个，默认 `shadow`。第一次夜间对照前只有 `tool.approval` 与 `turn.continue` 为 `active` |
 | 裁判 | choice / score，带概率。适配器 `llm` 与 `jev`。测试用假裁判 |
 | 失败 | 会挡住工具的点失败即挡住。其余点失败则当作该点关闭 |
 | 询问 | 交互式低于阈值时问人。非交互低于阈值时挡住，理由交回模型 |
-| 配置权 | 端点、密钥、模式、阈值只来自用户配置。仓库不能改。评测只在当次进程覆盖模式 |
+| 配置权 | 模式、阈值和 `llm` 的 API key 来自项目里的 `.sillward/config.json`。`jev` 的密钥来自环境变量 `TYPESAFE_API_KEY`。评测只在当次进程覆盖模式 |
 | 记忆 | 项目级 lessons。父 agent 与三个角色都 recall。只有父 agent 可写。全文去重。矛盾并存 |
 | ledger | 只记裁决与动作。默认不记原文、参数和文件内容 |
 | 测评 | 提交时跑假模型测试。夜间在 Linux 上做 tau 与 sillward 的对照。v1 的赢是报告稳定，且 sillward 通过率不低于 stock tau |
-| 以后再做 | hive、判断式压缩、生成中改写输出、检查点回溯、`memory.merge`、mude、由仓库改裁判、Terminal-Bench 门禁 |
+| 以后再做 | hive、判断式压缩、生成中改写输出、检查点回溯、`memory.merge`、mude、Terminal-Bench 门禁 |
 
 ## 2. 架构
 
@@ -61,7 +61,7 @@ src/sillward/
   __init__.py
   cli.py                 # 启动 tau，只加载本扩展
   extension.py           # setup(tau)
-  config.py              # 读取 ~/.sillward/config.json 与进程覆盖
+  config.py              # 读取项目 .sillward/config.json 与进程覆盖
   protocol.py            # 请求与裁决
   judges/
     base.py
@@ -103,7 +103,7 @@ LICENSE
 
 `pyproject.toml` 的项目名、import 包和脚本入口都是 `sillward`。依赖钉死一个 `tau-ai` 版本。开发依赖是 pytest 与 ruff。
 
-`.gitignore` 忽略 `.sillward/`。这个目录里有 lessons 和 ledger，其中即使做了字段限制，也不入库。
+`.gitignore` 忽略 `.sillward/` 里的 lessons、ledger 和含有 `llm_api_key` 的 `config.json`。例外是 `.sillward/config-template.json`，这份模板入库，改名为 `config.json` 后才会被读取。
 
 ## 4. 模块边界
 
@@ -120,7 +120,7 @@ LICENSE
 禁止：
 
 - 在钩子里直接请求 Jev 或主模型。一律走 `kernel.runner`。
-- 让项目目录里的文件修改端点、密钥、模式或阈值。
+- 让 `.sillward/config.json` 以外的项目文件修改端点、密钥、模式或阈值。
 - 让子 agent 获得 `agent` 工具，从而再委派一层。
 
 ## 5. 裁判协议
@@ -135,7 +135,7 @@ LICENSE
 | `llm` | 使用 tau 已经登录的模型，要求返回协议 JSON |
 | `jev` | TypeSafe System One。模型 id 放在用户配置里 |
 
-没有 Jev 密钥时用 `llm`。有密钥时用 `jev`。选择写在 `~/.sillward/config.json`，不写进仓库。
+没有 Jev 密钥时用 `llm`。有密钥时用 `jev`。选择写在项目的 `.sillward/config.json`。
 
 失败策略：
 
@@ -174,7 +174,7 @@ LICENSE
 | `swarm.routing` | shadow | 三个角色里哪一个适合这次委托。active 以后，仅当概率至少 0.80 且与父 agent 指定的角色不同，才改派 |
 | `swarm.patch` | shadow | implementer 的改动是否越出任务、路径和行数范围 |
 
-从 shadow 拨到 active 只能由人修改 `~/.sillward/config.json`。不根据 ledger 自动拨动。第一次夜间对照使用的进程覆盖只打开 `tool.approval` 和 `turn.continue`，不写回用户配置。
+从 shadow 拨到 active 只能由人修改项目里的 `.sillward/config.json`。不根据 ledger 自动拨动。第一次夜间对照使用的进程覆盖只打开 `tool.approval` 和 `turn.continue`，不写回用户配置。
 
 `task.frame` 存在会话的 `append_entry` 里，随会话结束而结束。它不是 lesson。
 
@@ -212,19 +212,20 @@ Ledger 文件：`.sillward/ledger.jsonl`。
 
 ## 9. 配置
 
-`~/.sillward/config.json` 由用户拥有。字段：
+项目里的 `.sillward/config.json` 由用户拥有。家目录不参与解析。字段：
 
 - `judge`：`llm` 或 `jev`
+- `llm_api_key`：`llm` 裁判的 API key。没写时为空
 - `jev_model`：System One 的模型 id
 - `modes`：每个决策点的 `active`、`shadow` 或 `off`，外加 `default`
 - `thresholds`：`approval` 默认 `0.80`，`approval_check` 默认 `0.70`，`routing_override` 默认 `0.80`
 - `record_state`：默认 `false`
 
-密钥只从环境变量读取，例如 `TYPESAFE_API_KEY`。不写入配置文件，不写入 ledger。
+`llm` 的密钥写在项目 `.sillward/config.json` 的 `llm_api_key`。这份文件被 git 忽略。`jev` 的密钥只从环境变量 `TYPESAFE_API_KEY` 读取。密钥不写入 ledger。
 
-进程覆盖：环境变量 `SILLWARD_MODE_OVERLAY`，值是 JSON 对象，只含点名到模式的映射。评测运行器在子进程里设置它。sillward 启动时把它叠在用户配置之上，进程结束即消失。项目里的任何文件都不能提供这份覆盖。
+进程覆盖：环境变量 `SILLWARD_MODE_OVERLAY`，值是 JSON 对象，只含点名到模式的映射。评测运行器在子进程里设置它。sillward 启动时把它叠在项目配置之上，进程结束即消失。除了 `.sillward/config.json`，项目里的其它文件不能提供 `judge` 或模式。
 
-缺少用户配置时，使用本文的默认值：全部 shadow，阈值如上，裁判为 `llm`。
+缺少项目配置时，使用本文的默认值：全部 shadow，阈值如上，裁判为 `llm`。
 
 ## 10. 测评
 
@@ -265,7 +266,7 @@ v1 的产品接受线：连续的夜间运行能产出这份报告，并且 sill
 - ledger 默认行不含原文、参数、文件内容。
 - 会挡住工具的点在裁判失败时得到「挡住」。
 - 其余点在裁判失败时得到「当作 off」。
-- 项目目录中的配置文件不能改变 `judge` 或 `modes`。
+- 家目录，以及项目里 `.sillward/config.json` 以外的文件，不能改变 `judge` 或 `modes`。项目的 `.sillward/config.json` 可以。
 - `SILLWARD_MODE_OVERLAY` 只影响当前进程的解析结果。
 
 `llm` 与 `jev` 适配器在本阶段可以只有接口和错误路径。真正的 HTTP 调用放到阶段 1 的末尾，并用录制的响应做测试，不在单测里打外网。
@@ -325,7 +326,7 @@ v1 的产品接受线：连续的夜间运行能产出这份报告，并且 sill
 
 - 公共函数和协议对象带类型注解。
 - 决策点的声明集中在 `kernel/points.py`。新增一个点要同时补上模式默认值、失败类别和一条测试。
-- 单测不访问网络，不读取开发者自己的 `~/.sillward/config.json`。测试用临时目录和临时家目录。
+- 单测不访问网络，不读取开发者自己的 `~/.sillward/config.json` 或本仓库的 `.sillward/config.json`。测试用临时目录。
 - 密钥不出现在仓库、ledger 默认行和评测报告里。
 - 依赖版本钉死。升级 `tau-ai` 单独做一个变更，并重跑阶段 2 到阶段 4 的假 provider 测试。
 - 格式与静态检查用 ruff。提交门禁包含 pytest 与 ruff。

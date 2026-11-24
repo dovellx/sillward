@@ -1,0 +1,26 @@
+{
+  "judge": "llm",
+  "llm_api_key": "<填写 LLM API key>",
+  "jev_model": "<填写 System One 模型 id，不用 jev 时改为 null>",
+  "modes": {
+    "default": "shadow",
+    "task.frame": "shadow",
+    "tool.approval": "shadow",
+    "tool.constraint": "shadow",
+    "tool.injection": "shadow",
+    "tool.admission": "shadow",
+    "turn.continue": "shadow",
+    "turn.completion": "shadow",
+    "memory.recall": "shadow",
+    "memory.capture": "shadow",
+    "memory.worth": "shadow",
+    "swarm.routing": "shadow",
+    "swarm.patch": "shadow"
+  },
+  "thresholds": {
+    "approval": 0.8,
+    "approval_check": 0.7,
+    "routing_override": 0.8
+  },
+  "record_state": false
+}

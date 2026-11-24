@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from pathlib import Path
 
 import httpx
 from tau_agent.messages import TextContent
@@ -113,11 +112,7 @@ class _ParentLoop:
     def _ready(self, context: ExtensionContext) -> tuple[Kernel, Config]:
         if self._kernel is None or self._config is None:
             self._client = httpx.Client()
-            config = load_config(
-                home=Path.home(),
-                project=context.cwd,
-                environ=os.environ,
-            )
+            config = load_config(project=context.cwd, environ=os.environ)
             judge = select_judge(
                 config,
                 environ=os.environ,

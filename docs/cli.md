@@ -31,7 +31,7 @@ tau-ai <所钉的 tau-ai 版本>
 
 tau 随安装自带的内置扩展仍会加载。`--no-extensions` 关掉的是目录发现，不是 tau 自己带的内置能力。
 
-会话第一次处理用户消息、工具或回合结束时，本扩展读取 `~/.sillward/config.json`（没有文件就用默认值），并按当前进程的 `SILLWARD_MODE_OVERLAY` 叠上模式。裁决写到项目里的 `.sillward/ledger.jsonl`。
+会话第一次处理用户消息、工具或回合结束时，本扩展读取项目里的 `.sillward/config.json`（没有文件就用默认值），并按当前进程的 `SILLWARD_MODE_OVERLAY` 叠上模式。家目录的配置不参与。裁决写到项目里的 `.sillward/ledger.jsonl`。
 
 默认每个决策点都是 `shadow`：会询问并记账，但不挡住命令、不改写工具输出、不追加 follow-up、不写 lesson、不把 lesson 放进用户消息。把某个点设成 `active` 之后，下面这些行为才会出现。细节和阈值见 [配置](config.md)。
 

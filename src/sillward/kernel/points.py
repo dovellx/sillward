@@ -20,7 +20,7 @@ def _point(point_id: str, *, blocks_tool: bool) -> Point:
 
 # Order is the plan's order. tool.approval and tool.constraint are the only
 # points whose judge failure blocks the tool call. Every other failure is
-# treated as off. Defaults stay shadow until a person edits user config.
+# treated as off. Defaults stay shadow until a person edits project config.
 POINTS: dict[str, Point] = {
     point.id: point
     for point in (

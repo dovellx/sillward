@@ -6,7 +6,7 @@
 
 父循环上的七个决策点接到了 tau 的钩子上：`task.frame`、`tool.approval`、`tool.constraint`、`tool.injection`、`tool.admission`、`turn.continue`、`turn.completion`。记忆和角色还没接。
 
-会话第一次处理输入、工具或回合结束时才读用户配置和进程覆盖，并创建判断核。`setup` 本身只注册钩子。默认仍是全部 `shadow`：询问并写 ledger，不改变工具、输出或回合。`SILLWARD_MODE_OVERLAY` 和 `~/.sillward/config.json` 里的 `modes` 可以单独把某个点设成 `active`。
+会话第一次处理输入、工具或回合结束时才读用户配置和进程覆盖，并创建判断核。`setup` 本身只注册钩子。默认仍是全部 `shadow`：询问并写 ledger，不改变工具、输出或回合。`SILLWARD_MODE_OVERLAY` 和项目 `.sillward/config.json` 里的 `modes` 可以单独把某个点设成 `active`。
 
 `tool.approval` 为 active 时，`bash` 以及项目外的 `write` / `edit` 要看概率。一般调用至少 `0.80` 才执行；以 `pytest` 或 `ruff` 开头的项目内测试和 lint（前面可以是 `uv run` 或 `python -m`）至少 `0.70`。低于阈值时，有交互界面就询问，没有界面（`sillward -p` / `--print`，以及夜间评测）就挡住，并把理由交回模型，不等待输入。刚好达到阈值则执行。项目内的 `write` 和 `edit` 不经过这一点。`tool.constraint` 为 active 时，违反已陈述约束的 `bash`、`write`、`edit` 被挡住。这两个点裁判失败时，即使模式是 `shadow` 也挡住该次调用。
 

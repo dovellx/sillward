@@ -68,7 +68,7 @@ GitHub 上的入口是 `.github/workflows/nightly.yml`。它在 `ubuntu-latest` 
 
 退出码是 0。通过率低于 stock tau 不会让这次运行失败，也不作为合并代码的条件。
 
-在 Linux 以外的机器上可以先打印下一次夜间要用的覆盖。这条命令不启动模型，也不修改 `~/.sillward/config.json`：
+在 Linux 以外的机器上可以先打印下一次夜间要用的覆盖。这条命令不启动模型，也不修改项目里的 `.sillward/config.json`：
 
 ```text
 uv run python -m eval.run --promote tool.constraint
