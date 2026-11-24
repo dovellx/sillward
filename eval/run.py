@@ -1,7 +1,9 @@
-"""Run one Python task on stock tau and on sillward, then write a report.
+"""Run one Python task on stock tau and on sillward, then archive the report.
 
-The nightly entry is Linux. ``--plan`` prints the platform and the mode overlay
-without starting a model. A non-Linux process stops before either arm runs.
+The nightly entry is Linux. ``--plan`` prints the platform, the base overlay, and
+the archive directory without starting a model. ``--promote`` prints the next
+overlay for one shadow point and does not write user config. A non-Linux process
+stops before either arm runs. A lower pass rate is archived and still exits 0.
 """
 
 from __future__ import annotations
@@ -28,10 +30,18 @@ from tau_coding.resources import TauResourcePaths
 from tau_coding.session import CodingSession, CodingSessionConfig
 
 import sillward.extension as extension_module
+from eval.acceptance import (
+    NIGHTLY_BASE,
+    AcceptanceError,
+    acceptance_exit_code,
+    effective_overlay,
+    overlay_promoting,
+    write_acceptance,
+)
 from eval.report import ArmScore, pinned_tau_version, render_report, sillward_version, write_report
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPARISON_OVERLAY = {"tool.approval": "active", "turn.continue": "active"}
+COMPARISON_OVERLAY = NIGHTLY_BASE
 _OVERLAY_ENV = "SILLWARD_MODE_OVERLAY"
 _ARMS = ("tau", "sillward")
 
@@ -191,9 +201,20 @@ def score_task(task: Task, workspace: Path) -> bool:
         return completed.returncode == 0
 
 
+def acceptance_root() -> Path:
+    """Where the nightly comparison archives its acceptance record."""
+    return ROOT / "eval" / "acceptance"
+
+
+def report_file(stamp: str) -> Path:
+    """Return the report path for one UTC date."""
+    return ROOT / "eval" / "reports" / f"{stamp}.json"
+
+
 def nightly_plan() -> dict[str, object]:
-    """Describe the nightly entry: Linux, and the overlay both docs and CI set."""
+    """Describe the nightly entry: Linux, the base overlay, and the archive."""
     return {
+        "acceptance": "eval/acceptance",
         "command": "uv run python -m eval.run",
         "overlay": dict(COMPARISON_OVERLAY),
         "platform": "linux",
@@ -210,8 +231,10 @@ def run_comparison(
     tau_home: Path,
     provider_factory: Callable[[str], object],
     now: datetime | None = None,
+    acceptance_root: Path | None = None,
 ) -> dict[str, object]:
-    """Run every task on both arms and write one report."""
+    """Run every task on both arms, write one report, and archive it."""
+    overlay = effective_overlay(os.environ)
     config = load_config(config_path)
     tasks = discover_tasks(tasks_dir)
     if not tasks:
@@ -230,6 +253,7 @@ def run_comparison(
                 work_root=work_root,
                 tau_home=tau_home,
                 provider_factory=provider_factory,
+                overlay=overlay,
             )
         )
     report = render_report(
@@ -237,16 +261,36 @@ def run_comparison(
         tau_pin=pinned_tau_version(ROOT / "pyproject.toml"),
         sillward_version=sillward_version(),
         model_id=config.model,
-        mode_overlay=COMPARISON_OVERLAY,
+        mode_overlay=overlay,
         scores=scores,
     )
     write_report(report, report_path)
+    if acceptance_root is not None:
+        write_acceptance(
+            report=report,
+            report_path=report_path,
+            acceptance_root=acceptance_root,
+            ledgers=_sillward_ledgers(work_root, tasks),
+        )
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print the nightly plan, or refuse to start the comparison off Linux."""
+    """Print a promotion or the nightly plan, or run the Linux comparison."""
     args = list(sys.argv[1:] if argv is None else argv)
+    try:
+        promotions = _promotions(args)
+    except AcceptanceError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if promotions is not None:
+        try:
+            overlay = overlay_promoting(promotions)
+        except AcceptanceError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        print(json.dumps(overlay, sort_keys=True))
+        return 0
     if "--plan" in args:
         print(json.dumps(nightly_plan(), sort_keys=True))
         return 0
@@ -257,12 +301,34 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    _run_nightly()
-    return 0
+    try:
+        effective_overlay(os.environ)
+    except AcceptanceError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    report = _run_nightly()
+    return acceptance_exit_code(report)
 
 
-def _run_nightly() -> None:
-    """Start both arms with the pinned provider. This is the Linux entry."""
+def _promotions(args: list[str]) -> list[str] | None:
+    """Collect ``--promote`` values. ``None`` means this is not a promotion."""
+    if "--promote" not in args:
+        return None
+    points: list[str] = []
+    index = 0
+    while index < len(args):
+        if args[index] != "--promote":
+            index += 1
+            continue
+        if index + 1 >= len(args) or args[index + 1].startswith("--"):
+            raise AcceptanceError("promote needs one shadow point")
+        points.append(args[index + 1])
+        index += 2
+    return points
+
+
+def _pinned_provider() -> object:
+    """Build the provider named in ``eval/config.toml``. This talks to the model."""
     from tau_coding.provider_config import load_provider_settings, resolve_provider_selection
     from tau_coding.provider_runtime import create_model_provider
 
@@ -273,20 +339,30 @@ def _run_nightly() -> None:
         provider_name=config.provider,
         model=config.model,
     )
-    provider = create_model_provider(selection.provider, model=selection.model)
+    return create_model_provider(selection.provider, model=selection.model)
+
+
+def _tau_home() -> Path:
+    """Return the tau home the nightly entry passes into both arms."""
+    return TauPaths().home
+
+
+def _run_nightly() -> dict[str, object]:
+    """Start both arms with the pinned provider. This is the Linux entry."""
+    provider = _pinned_provider()
     stamp = _utc_date(None)
-    report_path = ROOT / "eval" / "reports" / f"{stamp}.json"
     try:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            run_comparison(
+            return run_comparison(
                 config_path=ROOT / "eval" / "config.toml",
                 tasks_dir=ROOT / "eval" / "tasks",
                 work_root=root / "work",
-                report_path=report_path,
+                report_path=report_file(stamp),
                 home=Path.home(),
-                tau_home=TauPaths().home,
+                tau_home=_tau_home(),
                 provider_factory=lambda _arm: provider,
+                acceptance_root=acceptance_root(),
             )
     finally:
         asyncio.run(provider.aclose())
@@ -313,6 +389,16 @@ def _extension_file() -> Path:
     return Path(file).resolve()
 
 
+def _sillward_ledgers(work_root: Path, tasks: list[Task]) -> dict[str, Path]:
+    """Return each sillward-arm ledger that the run left on disk."""
+    found: dict[str, Path] = {}
+    for task in tasks:
+        path = work_root / "sillward" / task.id / ".sillward" / "ledger.jsonl"
+        if path.is_file():
+            found[task.id] = path
+    return found
+
+
 async def _run_tasks(
     *,
     config: EvalConfig,
@@ -320,6 +406,7 @@ async def _run_tasks(
     work_root: Path,
     tau_home: Path,
     provider_factory: Callable[[str], object],
+    overlay: Mapping[str, str],
 ) -> list[ArmScore]:
     scores: list[ArmScore] = []
     for task in tasks:
@@ -332,6 +419,7 @@ async def _run_tasks(
                     workspace=work_root / arm / task.id,
                     tau_home=tau_home,
                     provider=provider_factory(arm),
+                    overlay=overlay,
                 )
             )
     return scores
@@ -345,17 +433,18 @@ async def _run_arm(
     workspace: Path,
     tau_home: Path,
     provider: object,
+    overlay: Mapping[str, str],
 ) -> ArmScore:
     if workspace.exists():
         shutil.rmtree(workspace)
     shutil.copytree(task.start, workspace)
     capped = _CappedProvider(provider, config.turns)
-    overlay: dict[str, str | None]
+    applied: dict[str, str | None]
     if arm == "sillward":
-        overlay = {_OVERLAY_ENV: json.dumps(COMPARISON_OVERLAY, separators=(",", ":"))}
+        applied = {_OVERLAY_ENV: json.dumps(overlay, separators=(",", ":"), sort_keys=True)}
     else:
-        overlay = {_OVERLAY_ENV: None}
-    with _Env(overlay):
+        applied = {_OVERLAY_ENV: None}
+    with _Env(applied):
         session = await _open_session(
             workspace=workspace,
             tau_home=tau_home,

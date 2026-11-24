@@ -21,3 +21,13 @@ jobs:
         env:
           SILLWARD_MODE_OVERLAY: '{"tool.approval":"active","turn.continue":"active"}'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Archive the report and the acceptance record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-comparison
+          path: |
+            eval/reports/
+            eval/acceptance/
+          if-no-files-found: ignore
