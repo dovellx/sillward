@@ -23,8 +23,8 @@ def select_judge(
 
     A configured jev adapter without that key falls back to the llm adapter.
     An explicit ``judge: llm`` stays on llm even if the key is present.
-    The jev host is not in the plan, so the selected jev adapter has no base
-    URL until a caller supplies one.
+    The selected jev adapter calls TypeSafe System One. An empty model id
+    uses ``jev-latest``.
     """
     key = environ.get("TYPESAFE_API_KEY", "").strip()
     if config.judge == "jev" and key:

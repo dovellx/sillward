@@ -268,44 +268,109 @@ def test_llm_failure_blocks_a_tool_point_without_writing_the_key(tmp_path: Path)
     client.close()
 
 
-def test_jev_judge_reads_a_recorded_chat_completion() -> None:
-    """The jev adapter posts jev_model and parses the protocol object from the reply."""
+RECORDED_SYSTEM_ONE = {
+    "model": "jev-latest",
+    "answers": {
+        "verdict": {
+            "type": "choice",
+            "choice": "ship",
+            "confidence": 0.9,
+            "probabilities": {"ship": 0.81, "hold": 0.19},
+        }
+    },
+    "usage": {"input_tokens": 12, "output_tokens": 4},
+}
+RECORDED_SYSTEM_ONE_SCORE = {
+    "model": "jev-latest",
+    "answers": {
+        "verdict": {
+            "type": "score",
+            "score": 1.7,
+            "confidence": 0.55,
+            "probabilities": {"0": 0.1, "1": 0.1, "2": 0.8},
+        }
+    },
+}
+
+
+def test_jev_judge_posts_system_one_and_reads_the_choice() -> None:
+    """A chat completion would never reach TypeSafe, and would not yield this choice."""
     from sillward.judges.jev import JevJudge
 
-    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_CHAT))
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_SYSTEM_ONE))
     verdict = JevJudge(
         model="system-one",
         api_key="sk-jev",
-        base_url="https://judge.test/v1",
+        base_url="https://judge.test/v1/systemone",
         client=client,
     ).judge(_request("swarm.routing", summary="short-summary"))
 
     body = seen["body"]
     assert isinstance(body, dict)
-    assert seen["url"] == "https://judge.test/v1/chat/completions"
+    assert seen["url"] == "https://judge.test/v1/systemone"
     assert body["model"] == "system-one"
     assert seen["authorization"] == "Bearer sk-jev"
-    assert "short-summary" in json.dumps(body)
+    assert body["questions"] == {
+        "verdict": {
+            "type": "choice",
+            "instructions": "Choose one candidate for this decision point.",
+            "criteria": {"ship": "ship", "hold": "hold"},
+        }
+    }
+    assert body["state"]["point"] == "swarm.routing"
+    assert body["state"]["frame_summary"] == "short-summary"
+    assert body["state"]["state"]["file_content"] == FILE_CONTENT
     assert verdict.answer == "ship"
     assert dict(verdict.probabilities) == {"ship": 0.81, "hold": 0.19}
     assert verdict.adapter == "jev"
+    assert verdict.elapsed_ms >= 0
     client.close()
 
 
-def test_jev_without_an_endpoint_fails_before_http() -> None:
-    """No host is named in the plan, so a jev judge with no base URL must not post."""
-    from sillward.judges.base import JudgeFailure
+def test_jev_without_an_explicit_endpoint_posts_to_typesafe() -> None:
+    """An empty address used to stop before HTTP, so a configured key never reached Jev."""
     from sillward.judges.jev import JevJudge
 
-    def _refuse(request: httpx.Request) -> httpx.Response:
-        raise AssertionError(f"posted to {request.url}")
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_SYSTEM_ONE))
+    verdict = JevJudge(model="", api_key="sk-jev", base_url=None, client=client).judge(
+        _request("swarm.routing")
+    )
 
-    client = httpx.Client(transport=httpx.MockTransport(_refuse), trust_env=False)
-    with pytest.raises(JudgeFailure) as caught:
-        JevJudge(model="system-one", api_key="sk-jev", base_url=None, client=client).judge(
-            _request("swarm.routing")
-        )
-    assert "sk-jev" not in str(caught.value)
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert seen["url"] == "https://api.typesafe.ai/v1/systemone"
+    assert body["model"] == "jev-latest"
+    assert seen["authorization"] == "Bearer sk-jev"
+    assert verdict.answer == "ship"
+    assert "sk-jev" not in json.dumps(body)
+    client.close()
+
+
+def test_jev_score_sends_an_ordered_rubric_and_returns_the_level() -> None:
+    """Index-keyed score probabilities are not labels, so the verdict would fail closed."""
+    from sillward.judges.jev import JevJudge
+    from sillward.protocol import Question, Request
+
+    request = Request(
+        point="tool.approval",
+        question=Question.SCORE,
+        candidates=("low", "mid", "high"),
+        frame_summary="needs a check",
+    )
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_SYSTEM_ONE_SCORE))
+    verdict = JevJudge(
+        model="jev-latest",
+        api_key="sk-jev",
+        base_url="https://api.typesafe.ai/v1/systemone",
+        client=client,
+    ).judge(request)
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert body["questions"]["verdict"]["type"] == "score"
+    assert body["questions"]["verdict"]["criteria"] == ["low", "mid", "high"]
+    assert verdict.answer == "high"
+    assert dict(verdict.probabilities) == {"low": 0.1, "mid": 0.1, "high": 0.8}
     client.close()
 
 

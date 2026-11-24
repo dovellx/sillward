@@ -35,7 +35,7 @@
 
 `llm` 使用 tau 已经登录的模型。密钥先看该 provider 的环境变量（OpenAI 默认是 `OPENAI_API_KEY`），没有再看 tau home 里 `credentials.json` 的对应条目。当前会发非流式 HTTP 的只有两种 API：`openai-responses`（`{base}/responses`）和 `openai-completions`（`{base}/chat/completions`）。tau 自带目录里的 OpenAI 默认是 Responses。其它 provider API 在发出请求之前失败。
 
-实现计划没有给出 TypeSafe 的主机名，仓库里也不写死这个 URL。没有调用方传入的 base URL 时，jev 这次询问失败，并且不会发请求。有 base URL 时，它按 chat completions 发送 `jev_model`，并要求回复是协议 JSON。
+`jev` 按 TypeSafe System One 询问，和 mu 的 `jev-direct` 同一条接口：`POST https://api.typesafe.ai/v1/systemone`，请求体是 `model`、`state`、`questions`。`Authorization` 是 `Bearer` 加上 `TYPESAFE_API_KEY`。`jev_model` 不写时用 `jev-latest`。`choice` 题的候选是选项名，`score` 题的候选是从 0 开始的有序档位；返回的 `answers.verdict` 再收成裁决里的答案和每个候选的概率。
 
 ## Ledger
 

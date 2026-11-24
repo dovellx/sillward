@@ -34,7 +34,7 @@ Ledger 的默认行故意很窄。lessons 和对话里会有项目私有规则�
 | `config.py` | 读取用户配置，叠上进程覆盖 |
 | `judges/fake.py` | 测试注入的答案 |
 | `judges/llm.py` | 调用 tau 已经登录的模型 |
-| `judges/jev.py` | TypeSafe System One。没有 base URL 时失败，不发请求 |
+| `judges/jev.py` | TypeSafe System One。默认 `POST https://api.typesafe.ai/v1/systemone` |
 | `judges/remote.py` | 两边共用的 HTTP 和协议 JSON 解析 |
 | `judges/factory.py` | 按配置和 `TYPESAFE_API_KEY` 选择适配器 |
 | `kernel/points.py` | 十二个点的默认模式和失败类别 |
@@ -45,7 +45,7 @@ Ledger 的默认行故意很窄。lessons 和对话里会有项目私有规则�
 
 `llm` 用的是另一条缝：tau 的 provider 设置和凭证，不是上面那些钩子。调用方传入 tau 的 home。有 `providers.json` 时用 tau 的加载函数读出默认 provider 和它的 `default_model`；没有这份文件时用 tau 自带目录。密钥先取该 provider 的环境变量，没有再取 `credentials.json` 里 `credential_name` 那一条。`api` 为 `openai-responses` 时向 `{base}/responses` 发非流式请求；为 `openai-completions` 时向 `{base}/chat/completions` 发。tau 自带的 OpenAI 条目是 Responses，所以已登录的默认模型走这条。其它 API 在发请求之前失败。协议、配置、ledger 和假裁判都不导入 tau。
 
-jev 不读 tau。实现计划只规定了模型 id 和 `TYPESAFE_API_KEY`，没有给出主机，所以仓库不写死 URL。调用方传入 base URL 之后，它按 chat completions 发送 `jev_model`。
+jev 不读 tau。它按 mu 的 `jev-direct` 调用 TypeSafe System One：默认地址是 `https://api.typesafe.ai/v1/systemone`，模型 id 来自 `jev_model`，空着则用 `jev-latest`。请求体是 `model`、`state`、`questions`，不走 chat completions。
 
 ## 怎么测试
 
@@ -60,4 +60,4 @@ jev 不读 tau。实现计划只规定了模型 id 和 `TYPESAFE_API_KEY`，没�
 - `SILLWARD_MODE_OVERLAY` 只改变带上它的那一次解析。用户文件内容不变，进程环境不被写入。下一次不带这个变量时，模式回到文件里的值。覆盖里的 `judge` 会让这次解析失败。
 - `record_state` 为 true 时，参数和文件内容是 `[redacted]`，非敏感的 `step` 和 frame 摘要还在。
 - tau home 里用 tau 自己的接口把默认模型存成 `gpt-4o`，并把密钥放进 `credentials.json`。录制的 Responses 响应被解析成裁决；请求打到 `https://api.openai.com/v1/responses`，模型 id 是存下来的那个。`OPENAI_API_KEY` 优先于凭证文件。chat completions 用另一份录制响应。5xx、超时和协议外正文都变成裁判失败，且异常文本不含密钥和文件内容。没有密钥，或默认 provider 是 Anthropic 时，不会发出请求。
-- 配置为 `llm` 时，即使有 `TYPESAFE_API_KEY` 也仍是 llm。配置为 `jev` 但没有密钥时回到 llm。两者都有时是 jev。没有 base URL 的 jev 不发请求。
+- 配置为 `llm` 时，即使有 `TYPESAFE_API_KEY` 也仍是 llm。配置为 `jev` 但没有密钥时回到 llm。两者都有时是 jev，请求打到 `https://api.typesafe.ai/v1/systemone`；没写 `jev_model` 时模型是 `jev-latest`。
