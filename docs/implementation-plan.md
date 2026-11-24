@@ -1,6 +1,6 @@
 # sillward 实现计划
 
-sillward 是跑在 [huggingface/tau](https://github.com/huggingface/tau) 之上的编程 agent。tau 保持为依赖，不修改 `AgentHarness`。sillward 提供判断核、跨会话 lessons、一层角色委托，以及与 stock tau 的对照测评。
+sillward 是跑在仓库内 [huggingface/tau](https://github.com/huggingface/tau) 之上的编程 agent。tau 的源码在 `tau/`，基线是上游 `v0.4.8`。sillward 以扩展加载它，并提供判断核、跨会话 lessons、一层角色委托，以及与未改过的 tau 的对照测评。
 
 本文是实现合同。阶段顺序、模块边界、配置位置和测试门禁以本文为准。
 
@@ -9,7 +9,7 @@ sillward 是跑在 [huggingface/tau](https://github.com/huggingface/tau) 之上�
 | 项 | 决定 |
 | --- | --- |
 | 产品 | 可运行的编程 agent，不是评测平台，也不是给别人组合 agent 的框架 |
-| 与 tau 的关系 | 依赖 `tau-ai`，以扩展加载。不 fork harness |
+| 与 tau 的关系 | 源码在 `tau/`，基线 `v0.4.8`，以路径依赖安装，并以扩展加载。界面和 harness 的改动落在这份目录里 |
 | 运行时 | Python 3.12+，uv，进程内调用 tau |
 | 许可证 | MIT |
 | 名字 | 导入、命令、发行名都是 `sillward`。源码在 `src/sillward`。用户配置是项目里的 `.sillward/config.json`。项目状态也在 `.sillward/` |
@@ -57,6 +57,7 @@ tau 已有的缝，以及每个缝承担的决策点：
 当前工作目录名是 `lambda`。实现开始时把仓库目录改成 `sillward`。包名不跟随旧目录名。
 
 ```text
+tau/                       # huggingface/tau v0.4.8，路径依赖
 src/sillward/
   __init__.py
   cli.py                 # 启动 tau，只加载本扩展
@@ -101,7 +102,7 @@ pyproject.toml
 LICENSE
 ```
 
-`pyproject.toml` 的项目名、import 包和脚本入口都是 `sillward`。依赖钉死一个 `tau-ai` 版本。开发依赖是 pytest 与 ruff。
+`pyproject.toml` 的项目名、import 包和脚本入口都是 `sillward`。`tau-ai` 来自 `tau/`，版本与该目录里的 `pyproject.toml` 一致，当前是 `0.4.8`。开发依赖是 pytest 与 ruff。
 
 `.gitignore` 忽略 `.sillward/` 里的 lessons、ledger 和含有 `llm_api_key` 的 `config.json`。例外是 `.sillward/config-template.json`，这份模板入库，改名为 `config.json` 后才会被读取。
 
@@ -328,7 +329,7 @@ v1 的产品接受线：连续的夜间运行能产出这份报告，并且 sill
 - 决策点的声明集中在 `kernel/points.py`。新增一个点要同时补上模式默认值、失败类别和一条测试。
 - 单测不访问网络，不读取开发者自己的 `~/.sillward/config.json` 或本仓库的 `.sillward/config.json`。测试用临时目录。
 - 密钥不出现在仓库、ledger 默认行和评测报告里。
-- 依赖版本钉死。升级 `tau-ai` 单独做一个变更，并重跑阶段 2 到阶段 4 的假 provider 测试。
+- `tau/` 的基线钉死。升级单独做一个变更：用 subtree 合并上游标签，并重跑阶段 2 到阶段 4 的假 provider 测试。夜间对照的 stock 那一臂使用未改过的 `tau-ai==0.4.8`。
 - 格式与静态检查用 ruff。提交门禁包含 pytest 与 ruff。
 - 扩展的对外行为通过 tau 的钩子返回值表达，不依赖 TUI 控件。
 

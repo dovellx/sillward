@@ -12,6 +12,9 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = ["tau-ai==0.4.8"]
 
+[tool.uv.sources]
+tau-ai = { path = "tau", editable = true }
+
 [project.scripts]
 sillward = "sillward.cli:main"
 

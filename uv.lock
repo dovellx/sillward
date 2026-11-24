@@ -472,7 +472,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "tau-ai", specifier = "==0.4.8" }]
+requires-dist = [{ name = "tau-ai", editable = "tau" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -492,7 +492,7 @@ wheels = [
 [[package]]
 name = "tau-ai"
 version = "0.4.8"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "tau" }
 dependencies = [
     { name = "anyio" },
     { name = "httpx", extra = ["socks"] },
@@ -504,9 +504,25 @@ dependencies = [
     { name = "textual" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/34/216cda390cf7582ac3f3e08587f7c9c63c097cd7bda4bcf80029a76c04a2/tau_ai-0.4.8.tar.gz", hash = "sha256:ac7acc4ef6255ac06a8aea59e57fba7fb2767857e1323617dfb98445615dabe3", size = 1429706, upload-time = "2026-10-14T08:43:29.711Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/26/0898ea1d9d652123777557180830cf9e9d874d63c6657264bec2d394a1f8/tau_ai-0.4.8-py3-none-any.whl", hash = "sha256:b588eb065097c8094d21479def4ffac4b0d5ea60acc30de9193df0fe75a77238", size = 602050, upload-time = "2026-10-14T08:43:28.462Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4.0" },
+    { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
+    { name = "packaging", specifier = ">=24.0" },
+    { name = "pillow", specifier = ">=11.0" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pygments", specifier = ">=2.18" },
+    { name = "rich", specifier = ">=13.0" },
+    { name = "textual", specifier = ">=8.2.8" },
+    { name = "typer", specifier = ">=0.12" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.10" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.5" },
 ]
 
 [[package]]
