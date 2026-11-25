@@ -2,6 +2,18 @@
   "judge": "llm",
   "llm_api_key": "<填写 LLM API key>",
   "jev_model": "<填写 System One 模型 id，不用 jev 时改为 null>",
+  "models": {
+    "agent": {
+      "provider": null,
+      "model": null,
+      "api_key": null
+    },
+    "judge": {
+      "provider": null,
+      "model": null,
+      "api_key": null
+    }
+  },
   "modes": {
     "default": "shadow",
     "task.frame": "shadow",

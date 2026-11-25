@@ -457,3 +457,278 @@ def test_selected_llm_judge_sends_the_project_config_key(
     assert judge.name == "llm"
     assert seen["authorization"] == "Bearer sk-from-project"
     client.close()
+
+
+def test_from_tau_uses_the_named_model_instead_of_the_saved_default(tmp_path: Path) -> None:
+    """Sending the saved default would ask gpt-4o after the caller named gpt-4.1."""
+    from tau_coding.paths import TauPaths
+    from tau_coding.provider_config import save_default_provider_model
+
+    from sillward.judges.llm import LlmJudge
+
+    home = tmp_path / "tau"
+    home.mkdir()
+    save_default_provider_model(provider_name="openai", model="gpt-4o", paths=TauPaths(home=home))
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_RESPONSES))
+
+    LlmJudge.from_tau(home=home, api_key="sk-from-config", client=client, model="gpt-4.1").judge(
+        _request("task.frame")
+    )
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert seen["url"] == "https://api.openai.com/v1/responses"
+    assert body["model"] == "gpt-4.1"
+    assert seen["authorization"] == "Bearer sk-from-config"
+    client.close()
+
+
+def test_from_tau_provider_name_does_not_follow_the_default_provider(tmp_path: Path) -> None:
+    """Following the default provider would post this model to Anthropic."""
+    from dataclasses import replace
+
+    from tau_coding.paths import TauPaths
+    from tau_coding.provider_config import load_provider_settings, save_provider_settings
+
+    from sillward.judges.llm import LlmJudge
+
+    home = tmp_path / "tau"
+    home.mkdir()
+    paths = TauPaths(home=home)
+    settings = load_provider_settings(paths)
+    save_provider_settings(replace(settings, default_provider="anthropic"), paths)
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_RESPONSES))
+
+    LlmJudge.from_tau(
+        home=home,
+        api_key="sk-from-config",
+        client=client,
+        provider_name="openai",
+        model="gpt-4.1",
+    ).judge(_request("task.frame"))
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert seen["url"] == "https://api.openai.com/v1/responses"
+    assert body["model"] == "gpt-4.1"
+    assert seen["authorization"] == "Bearer sk-from-config"
+    client.close()
+
+
+def test_an_unknown_model_is_unavailable_before_any_http_call(tmp_path: Path) -> None:
+    """Posting an unknown model id would send a request tau has already rejected."""
+    from sillward.judges.base import JudgeFailure
+    from sillward.judges.llm import LlmJudge
+
+    home = tmp_path / "tau"
+    home.mkdir()
+
+    def _refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"posted to {request.url}")
+
+    client = httpx.Client(transport=httpx.MockTransport(_refuse), trust_env=False)
+    with pytest.raises(JudgeFailure, match="^unavailable$"):
+        LlmJudge.from_tau(
+            home=home,
+            api_key="sk-from-config",
+            client=client,
+            model="not-a-real-model",
+        )
+    client.close()
+
+
+def test_an_unknown_provider_is_unavailable_before_any_http_call(tmp_path: Path) -> None:
+    """Posting to an unknown provider would leave the home directory's catalog."""
+    from sillward.judges.base import JudgeFailure
+    from sillward.judges.llm import LlmJudge
+
+    home = tmp_path / "tau"
+    home.mkdir()
+
+    def _refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"posted to {request.url}")
+
+    client = httpx.Client(transport=httpx.MockTransport(_refuse), trust_env=False)
+    with pytest.raises(JudgeFailure, match="^unavailable$"):
+        LlmJudge.from_tau(
+            home=home,
+            api_key="sk-from-config",
+            client=client,
+            provider_name="not-a-provider",
+            model="gpt-4.1",
+        )
+    client.close()
+
+
+def test_select_judge_sends_the_configured_model_and_project_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Using tau's saved model would send gpt-4o and could pick up another key."""
+    from tau_coding.credentials import FileCredentialStore
+    from tau_coding.paths import TauPaths
+    from tau_coding.provider_config import save_default_provider_model
+
+    from sillward.config import load_config
+    from sillward.judges.factory import select_judge
+
+    project = tmp_path / "project"
+    destination = project / ".sillward"
+    destination.mkdir(parents=True)
+    (destination / "config.json").write_text(
+        json.dumps(
+            {
+                "judge": "llm",
+                "llm_api_key": "sk-from-project",
+                "models": {"judge": {"model": "gpt-4.1"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    tau_home = tmp_path / "tau"
+    tau_home.mkdir()
+    save_default_provider_model(
+        provider_name="openai", model="gpt-4o", paths=TauPaths(home=tau_home)
+    )
+    FileCredentialStore(tau_home / "credentials.json").set("openai", "sk-stored")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_RESPONSES))
+    judge = select_judge(
+        load_config(project=project, environ={}),
+        environ={"TYPESAFE_API_KEY": "sk-jev"},
+        tau_home=tau_home,
+        client=client,
+    )
+
+    judge.judge(_request("task.frame"))
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert judge.name == "llm"
+    assert seen["url"] == "https://api.openai.com/v1/responses"
+    assert body["model"] == "gpt-4.1"
+    assert seen["authorization"] == "Bearer sk-from-project"
+    client.close()
+
+
+def test_jev_selection_does_not_resolve_models_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolving models.judge would reject jev when that id is missing from tau."""
+    from sillward.config import load_config
+    from sillward.judges.factory import select_judge
+
+    project = tmp_path / "project"
+    destination = project / ".sillward"
+    destination.mkdir(parents=True)
+    (destination / "config.json").write_text(
+        json.dumps(
+            {
+                "judge": "jev",
+                "jev_model": "system-one",
+                "models": {"judge": {"model": "not-a-real-model"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("tau was consulted")
+
+    monkeypatch.setattr("sillward.judges.factory.LlmJudge.from_tau", _refuse)
+    monkeypatch.setattr("sillward.judges.llm.load_provider_settings", _refuse)
+    client = httpx.Client(trust_env=False)
+    selected = select_judge(
+        load_config(project=project, environ={}),
+        environ={"TYPESAFE_API_KEY": "sk-jev"},
+        tau_home=tmp_path / "tau",
+        client=client,
+    )
+
+    assert selected.name == "jev"
+    client.close()
+
+
+def test_a_named_judge_model_still_requires_the_project_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A named judge model must not send a stored credential when llm_api_key is empty."""
+    from tau_coding.credentials import FileCredentialStore
+
+    from sillward.config import load_config
+    from sillward.judges.base import JudgeFailure
+    from sillward.judges.factory import select_judge
+
+    project = tmp_path / "project"
+    destination = project / ".sillward"
+    destination.mkdir(parents=True)
+    (destination / "config.json").write_text(
+        json.dumps({"judge": "llm", "models": {"judge": {"model": "gpt-4.1"}}}),
+        encoding="utf-8",
+    )
+    tau_home = tmp_path / "tau"
+    tau_home.mkdir()
+    FileCredentialStore(tau_home / "credentials.json").set("openai", "sk-stored")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+
+    def _refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"posted to {request.url}")
+
+    client = httpx.Client(transport=httpx.MockTransport(_refuse), trust_env=False)
+    with pytest.raises(JudgeFailure, match="^missing api key$"):
+        select_judge(
+            load_config(project=project, environ={}),
+            environ={},
+            tau_home=tau_home,
+            client=client,
+        ).judge(_request("task.frame"))
+    client.close()
+
+
+def test_judge_target_api_key_is_sent_instead_of_the_other_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """llm_api_key, the environment, or a stored credential would replace models.judge.api_key."""
+    from tau_coding.credentials import FileCredentialStore
+
+    from sillward.config import load_config
+    from sillward.judges.factory import select_judge
+
+    project = tmp_path / "project"
+    destination = project / ".sillward"
+    destination.mkdir(parents=True)
+    (destination / "config.json").write_text(
+        json.dumps(
+            {
+                "judge": "llm",
+                "llm_api_key": "sk-llm-field",
+                "models": {
+                    "judge": {
+                        "provider": "deepseek",
+                        "model": "deepseek-v4-pro",
+                        "api_key": "sk-judge-target",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tau_home = tmp_path / "tau"
+    tau_home.mkdir()
+    FileCredentialStore(tau_home / "credentials.json").set("deepseek", "sk-stored")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
+    client, seen = _client(lambda _request: httpx.Response(200, json=RECORDED_CHAT))
+    judge = select_judge(
+        load_config(project=project, environ={}),
+        environ={},
+        tau_home=tau_home,
+        client=client,
+    )
+
+    judge.judge(_request("task.frame"))
+
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert seen["url"] == "https://api.deepseek.com/chat/completions"
+    assert body["model"] == "deepseek-v4-pro"
+    assert seen["authorization"] == "Bearer sk-judge-target"
+    client.close()

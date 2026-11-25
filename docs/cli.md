@@ -29,6 +29,8 @@ tau-ai <所钉的 tau-ai 版本>
 
 其余参数原样交给 tau。例如 `sillward --print "说明任务"` 就是让 tau 以 print 模式跑这条说明。`sillward --help` 显示的是 tau 的帮助。
 
+会话启动时，若命令行没有自己的 `--provider`、`--model` 或 `-m`，就把 `.sillward/config.json` 的 `models.agent` 追加给 tau。`models.agent.api_key` 也在这次启动时交给编码会话，用来盖过 tau 凭据文件和同名环境变量。密钥不会出现在命令行参数里。`update`、`install`、`sessions`、`export`、`providers`、`setup`、`--help`、`--export` 不追加。`sessions`、`providers`、`setup` 后面若还有别的词，那些词是初始提示，仍会追加；`sillward --print update` 里的 `update` 也是提示词。`--cwd` 决定读哪一个项目；没写就用当前目录。最后一个 `--cwd` 生效。那个目录没有这份文件时不追加，也不创建目录。
+
 tau 随安装自带的内置扩展仍会加载。`--no-extensions` 关掉的是目录发现，不是 tau 自己带的内置能力。
 
 会话第一次处理用户消息、工具或回合结束时，本扩展读取项目里的 `.sillward/config.json`（没有文件就用默认值），并按当前进程的 `SILLWARD_MODE_OVERLAY` 叠上模式。家目录的配置不参与。裁决写到项目里的 `.sillward/ledger.jsonl`。

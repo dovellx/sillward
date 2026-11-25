@@ -23,7 +23,9 @@ def select_judge(
 
     A configured jev adapter without that key falls back to the llm adapter.
     An explicit ``judge: llm`` stays on llm even if the key is present.
-    The llm adapter uses ``llm_api_key`` from project config.
+    The llm adapter uses ``models.judge.api_key`` when that is set, and
+    otherwise ``llm_api_key``. ``models.judge`` also selects the provider and
+    model. jev does not read either key.
     The selected jev adapter calls TypeSafe System One. An empty model id
     uses ``jev-latest``.
     """
@@ -35,8 +37,14 @@ def select_judge(
             base_url=None,
             client=client,
         )
+    target = config.models.judge
+    api_key = config.llm_api_key or ""
+    if target is not None and target.api_key:
+        api_key = target.api_key
     return LlmJudge.from_tau(
         home=tau_home,
-        api_key=config.llm_api_key or "",
+        api_key=api_key,
         client=client,
+        provider_name=None if target is None else target.provider,
+        model=None if target is None else target.model,
     )

@@ -16,7 +16,7 @@ uv run python -m eval.run
 uv run python -m eval.run --plan
 ```
 
-sillward 这一臂设置 `SILLWARD_MODE_OVERLAY` 为 `{"tool.approval":"active","turn.continue":"active"}`。其余决策点保持 `shadow`。stock tau 那一臂不加载本扩展。两臂使用 `eval/config.toml` 里钉死的同一个 provider 和 model id：`openai` / `gpt-5.4`，也就是所钉 `tau-ai==0.4.8` 的默认模型。回合数是 30，时限是 600 秒，两臂相同。密钥来自环境变量，例如 `OPENAI_API_KEY`，不写进报告。
+sillward 这一臂设置 `SILLWARD_MODE_OVERLAY` 为 `{"tool.approval":"active","turn.continue":"active"}`。其余决策点保持 `shadow`。stock tau 那一臂不加载本扩展。两臂使用 `eval/config.toml` 里钉死的同一个 provider 和 model id：`openai` / `gpt-5.4`，也就是所钉 `tau-ai==0.4.8` 的默认模型。这个钉来自 `eval/config.toml`，不读项目 `.sillward/config.json` 的 `models.agent`。评测工作目录没有该文件时，裁判模型也不受项目配置影响。回合数是 30，时限是 600 秒，两臂相同。密钥来自环境变量，例如 `OPENAI_API_KEY`，不写进报告。
 
 GitHub 上的入口是 `.github/workflows/nightly.yml`。它在 `ubuntu-latest` 上、由手动触发运行，并设置同一个 `SILLWARD_MODE_OVERLAY`。
 

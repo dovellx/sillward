@@ -1,6 +1,6 @@
 # 配置
 
-用户配置是当前项目里的 `.sillward/config.json`。模式、阈值和 `llm` 的 API key 放在这里。家目录的 `~/.sillward/config.json` 不参与解析。项目根上的其它文件，例如 `config.json` 或 `sillward.json`，也不参与解析。这份文件含有密钥，已被 git 忽略。仓库里另有 `.sillward/config-template.json`，把文件名改成 `config.json` 后填入 `llm_api_key` 即可。模板本身不会被读取。在别的目录里运行时，读的是那个目录自己的 `.sillward/config.json`；没有文件就用下面的默认值。
+用户配置是当前项目里的 `.sillward/config.json`。模式、阈值和 `llm` 的 API key 放在这里。编码模型和 `llm` 裁判的模型也在这份文件里。家目录的 `~/.sillward/config.json` 不参与解析。项目根上的其它文件，例如 `config.json` 或 `sillward.json`，也不参与解析。这份文件含有密钥，已被 git 忽略。仓库里另有 `.sillward/config-template.json`，把文件名改成 `config.json` 后填入 `llm_api_key` 即可。模板本身不会被读取。在别的目录里运行时，读的是那个目录自己的 `.sillward/config.json`；没有文件就用下面的默认值。
 
 没有用户配置时：
 
@@ -9,10 +9,30 @@
 - `thresholds.approval` 为 `0.80`，`approval_check` 为 `0.70`，`routing_override` 为 `0.80`
 - `record_state` 为 `false`
 - `llm_api_key` 为空
+- 不指定 `models.agent` 和 `models.judge`
 
 ## 字段
 
 `judge` 是 `llm` 或 `jev`。`llm_api_key` 是 `llm` 裁判调用模型时用的密钥。`jev_model` 是 System One 的模型 id。
+
+`models` 给编码会话和 `llm` 裁判指定 tau 目录里已有的模型，以及各自的密钥。可以两个都写，也可以只写一侧：
+
+```json
+"models": {
+  "agent": { "provider": "deepseek", "model": "deepseek-v4-pro", "api_key": "sk-..." },
+  "judge": { "provider": "deepseek", "model": "deepseek-v4-pro", "api_key": "sk-..." }
+}
+```
+
+`models.agent` 是这次编码会话的模型，父会话用它。`models.agent.api_key` 是这把钥匙。启动编码会话时，sillward 用文件里的这把钥匙，不用再导出环境变量，也不用手改 tau 的 `credentials.json`。tau 会先读它自己的凭据，所以这次启动会用文件里的钥匙盖过同名凭据和环境变量。钥匙不会出现在转发给 tau 的命令行参数里。
+
+`models.judge` 是 `llm` 裁判的模型。`models.judge.api_key` 有值时，裁判用这把钥匙；没写时仍用文件里的 `llm_api_key`。
+
+`provider` 和 `model` 都可以只写一个。只写 `model` 时，编码会话让 tau 用默认 provider 配这个模型 id，裁判也用默认 provider 配这个 id。只写 `provider` 时，用该 provider 的默认模型。
+
+没写 `models`、写成 `null`、某个目标缺席或为 `null`、目标是 `{}`、或者 `provider`、`model`、`api_key` 都是 `null`，那一侧和没配置时一样。模型 id 必须已经在 tau 的目录里。内置模型来自 tau 自带的 catalog，用户追加的写在 tau 主目录的 `catalog.toml`。这里不写地址、请求头或另一份 catalog。自定义网关先加进 tau 的 catalog，再在这里写它的 provider 名、模型 id 和密钥。`TYPESAFE_API_KEY` 仍只给 jev，不写进这个文件。
+
+命令行上的 `--provider`、`--model` 或 `-m` 盖过整个 `models.agent`。只写了其中一个时，文件里的另一个也不补上，并且不会写回 tau 的 `providers.json`。implementer、reviewer、explorer 跟父会话，不单独配模型。`jev_model` 仍只给 jev。`judge` 是 `jev` 时，`models.judge` 不参与。
 
 `modes` 的值是 `active`、`shadow` 或 `off`。可以写 `default`，也可以按决策点 id 覆盖。没写到的点使用 `default`；没有 `default` 时，该点的声明默认是 `shadow`。
 
@@ -24,7 +44,7 @@
 
 环境变量 `SILLWARD_MODE_OVERLAY` 的值是一个 JSON 对象，键是决策点 id，值是 `active`、`shadow` 或 `off`。它叠在用户配置之上，只改变这一次读取得到的模式，不写回 `config.json`。下一次读取如果进程里没有这个变量，模式回到文件里的值。
 
-对象里出现决策点以外的键（包括 `judge`）时，这一次读取失败，文件保持原样。
+对象里出现决策点以外的键（包括 `judge` 和 `models`）时，这一次读取失败，文件保持原样。不要把模型放进这个环境变量。
 
 ## 密钥与适配器
 
@@ -36,7 +56,7 @@
 - 配置写了 `jev` 但没有这个密钥：回到 `llm`。
 - 配置写了 `llm`：即使环境里有 `TYPESAFE_API_KEY`，仍然用 `llm`。
 
-`llm` 使用 tau 已经选好的模型和接口，密钥用上面的 `llm_api_key`。当前会发非流式 HTTP 的只有两种 API：`openai-responses`（`{base}/responses`）和 `openai-completions`（`{base}/chat/completions`）。tau 自带目录里的 OpenAI 默认是 Responses。其它 provider API 在发出请求之前失败。
+没写 `models.judge` 时，`llm` 使用 tau 默认 provider 的默认模型和接口；写了则使用该 provider 和模型。`models.judge.api_key` 有值时用这把钥匙，否则用上面的 `llm_api_key`。当前会发非流式 HTTP 的只有两种 API：`openai-responses`（`{base}/responses`）和 `openai-completions`（`{base}/chat/completions`）。tau 自带目录里的 OpenAI 默认是 Responses。其它 provider API 在发出请求之前失败。
 
 `jev` 按 TypeSafe System One 询问，和 mu 的 `jev-direct` 同一条接口：`POST https://api.typesafe.ai/v1/systemone`，请求体是 `model`、`state`、`questions`。`Authorization` 是 `Bearer` 加上 `TYPESAFE_API_KEY`。`jev_model` 不写时用 `jev-latest`。`choice` 题的候选是选项名，`score` 题的候选是从 0 开始的有序档位；返回的 `answers.verdict` 再收成裁决里的答案和每个候选的概率。
 

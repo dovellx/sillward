@@ -133,7 +133,7 @@ LICENSE
 | 适配器 | 行为 |
 | --- | --- |
 | `fake` | 测试注入答案。不访问网络 |
-| `llm` | 使用 tau 已经登录的模型，要求返回协议 JSON |
+| `llm` | 未写 `models.judge` 时使用 tau 默认 provider 的默认模型；写了则使用配置里的 provider 和模型。密钥仍是项目配置里的 `llm_api_key`。要求返回协议 JSON |
 | `jev` | TypeSafe System One。模型 id 放在用户配置里 |
 
 没有 Jev 密钥时用 `llm`。有密钥时用 `jev`。选择写在项目的 `.sillward/config.json`。
@@ -218,6 +218,8 @@ Ledger 文件：`.sillward/ledger.jsonl`。
 - `judge`：`llm` 或 `jev`
 - `llm_api_key`：`llm` 裁判的 API key。没写时为空
 - `jev_model`：System One 的模型 id
+- `models.agent`：编码会话的 provider、模型 id 和 `api_key`。命令行上的 `--provider`、`--model` 或 `-m` 优先，并且不写回 tau 主目录。`api_key` 在启动时交给这次编码会话
+- `models.judge`：`llm` 裁判的 provider、模型 id 和 `api_key`。没写模型时用 tau 默认 provider 的默认模型。`api_key` 没写时用 `llm_api_key`
 - `modes`：每个决策点的 `active`、`shadow` 或 `off`，外加 `default`
 - `thresholds`：`approval` 默认 `0.80`，`approval_check` 默认 `0.70`，`routing_override` 默认 `0.80`
 - `record_state`：默认 `false`

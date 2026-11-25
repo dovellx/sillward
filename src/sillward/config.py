@@ -15,6 +15,8 @@ from sillward.kernel.points import POINTS
 
 _MODES = frozenset({"active", "shadow", "off"})
 _JUDGES = frozenset({"llm", "jev"})
+_MODEL_TARGETS = frozenset({"agent", "judge"})
+_MODEL_FIELDS = frozenset({"provider", "model", "api_key"})
 _THRESHOLD_KEYS = ("approval", "approval_check", "routing_override")
 _DEFAULT_THRESHOLDS = {"approval": 0.8, "approval_check": 0.7, "routing_override": 0.8}
 
@@ -33,6 +35,23 @@ class Thresholds:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelTarget:
+    """A provider name, a model id, and the key for that role."""
+
+    provider: str | None
+    model: str | None
+    api_key: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class Models:
+    """Coding-session and llm-judge model selections from the project file."""
+
+    agent: ModelTarget | None
+    judge: ModelTarget | None
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Resolved settings for one process."""
 
@@ -42,6 +61,7 @@ class Config:
     modes: Mapping[str, str]
     thresholds: Thresholds
     record_state: bool
+    models: Models
 
     def mode(self, point: str) -> str:
         """Return the mode for a declared point."""
@@ -57,7 +77,7 @@ def load_config(*, project: Path, environ: Mapping[str, str]) -> Config:
     The home directory is not opened. Other files in ``project``, such as
     ``config.json`` at the project root, are not opened either. A missing
     project file yields the plan's defaults: judge ``llm``, every point
-    ``shadow``, and the standard thresholds.
+    ``shadow``, the standard thresholds, and no model targets.
     """
     raw = _read_user_config(project / ".sillward" / "config.json")
     modes = _apply_overlay(_resolve_modes(raw.get("modes")), environ)
@@ -68,6 +88,7 @@ def load_config(*, project: Path, environ: Mapping[str, str]) -> Config:
         modes=modes,
         thresholds=_thresholds(raw.get("thresholds")),
         record_state=_flag(raw.get("record_state"), field_name="record_state"),
+        models=_models(raw.get("models")),
     )
 
 
@@ -132,6 +153,51 @@ def _mode_value(value: object) -> str:
     if not isinstance(value, str) or value not in _MODES:
         raise ConfigError("mode must be active, shadow, or off")
     return value
+
+
+def _models(raw: object) -> Models:
+    if raw is None:
+        return Models(agent=None, judge=None)
+    if not isinstance(raw, dict):
+        raise ConfigError("models must be an object")
+    for key in raw:
+        if key not in _MODEL_TARGETS:
+            raise ConfigError(f"unknown model target {key}")
+    return Models(
+        agent=_model_target("agent", raw.get("agent")),
+        judge=_model_target("judge", raw.get("judge")),
+    )
+
+
+def _model_target(name: str, raw: object) -> ModelTarget | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"models.{name} must be an object")
+    provider: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    for key, value in raw.items():
+        if key not in _MODEL_FIELDS:
+            raise ConfigError(f"unknown field models.{name}.{key}")
+        parsed = _model_field(value, name=name, field=key)
+        if key == "provider":
+            provider = parsed
+        elif key == "model":
+            model = parsed
+        else:
+            api_key = parsed
+    if provider is None and model is None and api_key is None:
+        return None
+    return ModelTarget(provider=provider, model=model, api_key=api_key)
+
+
+def _model_field(value: object, *, name: str, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"models.{name}.{field} must be a non-empty string")
+    return value.strip()
 
 
 def _judge_name(value: object) -> str:

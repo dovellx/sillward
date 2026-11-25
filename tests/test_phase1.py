@@ -76,6 +76,10 @@ def _write_ignored_configs(home: Path, project: Path) -> None:
         "modes": {"default": "active", "tool.approval": "active", "turn.continue": "off"},
         "thresholds": {"approval": 0.1, "approval_check": 0.1, "routing_override": 0.1},
         "record_state": True,
+        "models": {
+            "agent": {"provider": "ignored", "model": "from-ignored-file"},
+            "judge": {"provider": "ignored", "model": "from-ignored-file"},
+        },
     }
     text = json.dumps(payload)
     (project / "config.json").write_text(text, encoding="utf-8")
@@ -231,7 +235,7 @@ def test_other_points_are_treated_as_off_when_the_judge_fails(
 def test_home_and_loose_files_cannot_change_judge_or_modes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reading the home file, the template, or a loose file would adopt its judge."""
+    """Reading the home file, the template, or a loose file would adopt its judge and models."""
     from sillward.config import load_config
 
     home = tmp_path / "home"
@@ -244,6 +248,8 @@ def test_home_and_loose_files_cannot_change_judge_or_modes(
     assert config.judge == "llm"
     assert config.jev_model is None
     assert config.llm_api_key is None
+    assert config.models.agent is None
+    assert config.models.judge is None
     assert config.record_state is False
     assert config.thresholds.approval == 0.8
     assert config.thresholds.approval_check == 0.7
@@ -410,3 +416,188 @@ def test_recorded_state_redacts_parameters_and_file_content(tmp_path: Path) -> N
     text = _ledger_text(project)
     assert PARAMETERS not in text
     assert FILE_CONTENT not in text
+
+
+def _write_project_config(project: Path, payload: object) -> Path:
+    destination = project / ".sillward"
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / "config.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _model_target(pair: tuple[str | None, str | None] | None):
+    from sillward.config import ModelTarget
+
+    if pair is None:
+        return None
+    return ModelTarget(provider=pair[0], model=pair[1])
+
+
+@pytest.mark.parametrize(
+    ("payload", "agent", "judge"),
+    [
+        pytest.param({}, None, None, id="absent"),
+        pytest.param({"models": None}, None, None, id="null"),
+        pytest.param({"models": {}}, None, None, id="empty"),
+        pytest.param({"models": {"agent": None}}, None, None, id="null-agent"),
+        pytest.param({"models": {"judge": None}}, None, None, id="null-judge"),
+        pytest.param({"models": {"agent": {}}}, None, None, id="empty-agent"),
+        pytest.param(
+            {"models": {"judge": {"provider": None, "model": None, "api_key": None}}},
+            None,
+            None,
+            id="null-fields",
+        ),
+        pytest.param(
+            {
+                "models": {
+                    "agent": {"provider": "openai", "model": "gpt-5.4"},
+                    "judge": {"provider": "openai", "model": "gpt-4.1"},
+                }
+            },
+            ("openai", "gpt-5.4"),
+            ("openai", "gpt-4.1"),
+            id="both-fields",
+        ),
+        pytest.param(
+            {"models": {"agent": {"model": "gpt-5.4"}, "judge": {"model": "gpt-4.1"}}},
+            (None, "gpt-5.4"),
+            (None, "gpt-4.1"),
+            id="model-only",
+        ),
+        pytest.param(
+            {"models": {"agent": {"provider": "openai"}, "judge": {"provider": "anthropic"}}},
+            ("openai", None),
+            ("anthropic", None),
+            id="provider-only",
+        ),
+        pytest.param(
+            {"models": {"agent": {"provider": "  openai  ", "model": " gpt-5.4 "}}},
+            ("openai", "gpt-5.4"),
+            None,
+            id="stripped",
+        ),
+    ],
+)
+def test_project_file_names_agent_and_judge_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: object, agent, judge
+) -> None:
+    """Leaving models unset would drop a model id the project file named."""
+    from sillward.config import load_config
+
+    project = tmp_path / "project"
+    _write_project_config(project, payload)
+    monkeypatch.chdir(project)
+
+    config = load_config(project=project, environ={})
+
+    assert config.models.agent == _model_target(agent)
+    assert config.models.judge == _model_target(judge)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"models": "openai"}, "models must be an object"),
+        ({"models": ["agent"]}, "models must be an object"),
+        ({"models": {"explorer": {"model": "gpt-4o"}}}, "unknown model target explorer"),
+        ({"models": {"agent": "gpt-5.4"}}, "models.agent must be an object"),
+        ({"models": {"judge": ["gpt-4.1"]}}, "models.judge must be an object"),
+        (
+            {"models": {"agent": {"base_url": "https://example.test"}}},
+            "unknown field models.agent.base_url",
+        ),
+        (
+            {
+                "llm_api_key": "sk-super-secret-sentinel",
+                "models": {"agent": {"api_key": "   "}},
+            },
+            "models.agent.api_key must be a non-empty string",
+        ),
+        (
+            {"models": {"judge": {"api_key": 1}}},
+            "models.judge.api_key must be a non-empty string",
+        ),
+        (
+            {"llm_api_key": "sk-super-secret-sentinel", "models": {"agent": {"provider": "   "}}},
+            "models.agent.provider must be a non-empty string",
+        ),
+        ({"models": {"judge": {"model": ""}}}, "models.judge.model must be a non-empty string"),
+        ({"models": {"agent": {"model": 5}}}, "models.agent.model must be a non-empty string"),
+        (
+            {"models": {"judge": {"provider": True}}},
+            "models.judge.provider must be a non-empty string",
+        ),
+    ],
+)
+def test_malformed_models_raise_config_error(tmp_path: Path, payload: object, message: str) -> None:
+    """Accepting these shapes would store a gateway, a blank id, or the raw key."""
+    from sillward.config import ConfigError, load_config
+
+    project = tmp_path / "project"
+    _write_project_config(project, payload)
+
+    with pytest.raises(ConfigError) as caught:
+        load_config(project=project, environ={})
+
+    assert str(caught.value) == message
+    assert "sk-super-secret-sentinel" not in str(caught.value)
+    assert "https://example.test" not in str(caught.value)
+
+
+def test_mode_overlay_cannot_name_a_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An overlay model would change this process and could rewrite the project file."""
+    from sillward.config import ConfigError, load_config
+
+    project = tmp_path / "project"
+    path = _write_project_config(project, {"modes": {"tool.approval": "off"}})
+    monkeypatch.chdir(project)
+    monkeypatch.delenv("SILLWARD_MODE_OVERLAY", raising=False)
+    before = path.read_bytes()
+
+    with pytest.raises(ConfigError, match="unknown point in SILLWARD_MODE_OVERLAY: models"):
+        load_config(
+            project=project,
+            environ={
+                "SILLWARD_MODE_OVERLAY": json.dumps({"models": {"agent": {"model": "gpt-4o"}}})
+            },
+        )
+
+    assert path.read_bytes() == before
+
+
+def test_model_api_keys_are_kept_and_hidden_from_repr(tmp_path: Path) -> None:
+    """Dropping api_key would leave the coding session on tau's credential file."""
+    from sillward.config import ModelTarget, load_config
+
+    project = tmp_path / "project"
+    _write_project_config(
+        project,
+        {
+            "models": {
+                "agent": {
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "api_key": "  sk-agent-sentinel  ",
+                },
+                "judge": {"api_key": "sk-judge-sentinel"},
+            }
+        },
+    )
+
+    config = load_config(project=project, environ={})
+
+    assert config.models.agent == ModelTarget(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="sk-agent-sentinel",
+    )
+    assert config.models.judge == ModelTarget(
+        provider=None,
+        model=None,
+        api_key="sk-judge-sentinel",
+    )
+    rendered = repr(config)
+    assert "sk-agent-sentinel" not in rendered
+    assert "sk-judge-sentinel" not in rendered

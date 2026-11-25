@@ -12,6 +12,7 @@ from tau_coding.provider_config import (
     ProviderSettings,
     load_provider_settings,
     provider_settings_path,
+    resolve_provider_selection,
 )
 
 from sillward.judges.base import JudgeFailure
@@ -54,6 +55,8 @@ class LlmJudge:
         home: Path,
         api_key: str,
         client: httpx.Client,
+        provider_name: str | None = None,
+        model: str | None = None,
     ) -> LlmJudge:
         """Build a judge from tau's provider settings and an explicit API key.
 
@@ -62,9 +65,16 @@ class LlmJudge:
         Environment variables and tau's credential file are not opened.
         A missing key or an unsupported provider API is reported when
         ``judge`` is called, not while selecting the adapter.
+        With no ``provider_name`` and no ``model``, the endpoint is the
+        default provider's default model. Otherwise the named catalog entry
+        is used. An unknown provider or model is ``unavailable`` before any
+        request is sent.
         """
         try:
-            endpoint = _endpoint_from_tau(home, api_key)
+            if provider_name is None and model is None:
+                endpoint = _endpoint_from_tau(home, api_key)
+            else:
+                endpoint = _selected_endpoint(home, api_key, provider_name, model)
         except ProviderConfigError as exc:
             raise JudgeFailure("unavailable") from exc
         return cls(endpoint=endpoint, client=client)
@@ -104,6 +114,27 @@ def _endpoint_from_tau(home: Path, api_key: str) -> ModelEndpoint:
     provider = settings.get_provider()
     return ModelEndpoint(
         model=provider.default_model,
+        base_url=provider.base_url,
+        api=str(getattr(provider, "api", "")),
+        api_key=api_key.strip(),
+    )
+
+
+def _selected_endpoint(
+    home: Path,
+    api_key: str,
+    provider_name: str | None,
+    model: str | None,
+) -> ModelEndpoint:
+    paths = TauPaths(home=home)
+    selection = resolve_provider_selection(
+        _settings(paths),
+        provider_name=provider_name,
+        model=model,
+    )
+    provider = selection.provider
+    return ModelEndpoint(
+        model=selection.model,
         base_url=provider.base_url,
         api=str(getattr(provider, "api", "")),
         api_key=api_key.strip(),
